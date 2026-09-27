@@ -65,8 +65,95 @@ STYLE_DEFAULTS = {
     "max_caracteres_titulo": 60, "max_alerts": 2, "max_negritas": 3,
     "sin_punto_final": False, "prohibir_colores_directos": True,
     "prohibir_vspace_negativo": True, "tamanos_permitidos": [r"\small"],
+    "max_fraccion_vinetas": 0.4,
 }
 SLIDES_MARK = "%%SLIDES%%"
+
+# Tipos de diapositiva. La descripción va al guion; la plantilla (genérica, no de
+# ningún paper) va al prompt de la diapo; el contrato se verifica en kind_check.
+KINDS = {
+    "bullets": (
+        "lista breve; úsala solo cuando ningún otro formato sirva",
+        r"""\begin{frame}{El método reduce el tiempo sin perder precisión}
+\begin{itemize}
+  \item Idea principal en una línea.
+  \item Segunda idea, en paralelo gramatical.
+  \item \alert{La consecuencia que importa.}
+\end{itemize}
+\end{frame}""", None),
+    "columns": (
+        "dos columnas: comparar dos enfoques, o texto a un lado y fórmula/tabla al otro",
+        r"""\begin{frame}{Los enfoques clásicos ignoran la estructura}
+\begin{columns}[T]
+\column{0.48\textwidth}
+\textbf{Enfoque A}
+\begin{itemize}
+  \item Simple y barato.
+  \item No usa información del problema.
+\end{itemize}
+\column{0.48\textwidth}
+\textbf{Enfoque B}
+\[ s_i = |a_i|\cdot w_i \]
+Mide el efecto estimado de cada componente.
+\end{columns}
+\end{frame}""", (r"\\begin\{columns\}", "usa un entorno columns con dos \\column")),
+    "block": (
+        "bloques de Beamer: definición, resultado clave, limitación o mensaje para recordar",
+        r"""\begin{frame}{Promediar todo diluye la señal relevante}
+\begin{block}{Definición}
+Una restricción está \emph{activa} si se cumple con igualdad en el óptimo.
+\end{block}
+\begin{alertblock}{Problema}
+Las estrategias actuales pesan igual las restricciones activas e inactivas.
+\end{alertblock}
+\begin{exampleblock}{Idea}
+Ponderar cada restricción por su relevancia.
+\end{exampleblock}
+\end{frame}""", (r"\\begin\{(?:alert|example)?block\}", "usa al menos un block, alertblock o exampleblock")),
+    "equation": (
+        "una o dos ecuaciones centrales en display, cada una con una línea que explique qué significa",
+        r"""\begin{frame}{El Lagrangiano combina objetivo y restricciones}
+\[ L(x,\lambda) = f(x) + \sum_{j=1}^{m} \lambda_j\, g_j(x) \]
+\begin{itemize}
+  \item $\lambda_j \ge 0$ pondera la restricción $g_j$.
+  \item \alert{$\lambda_j = 0$ si la restricción no influye en el óptimo.}
+\end{itemize}
+\end{frame}""", (r"\\\[|\\begin\{(?:equation|align|gather|multline)\*?\}",
+                    "incluye al menos una ecuación en display (\\[ \\] o align)")),
+    "table": (
+        "tabla booktabs con solo las filas y columnas que sostienen el mensaje, y 2-3 líneas de lectura",
+        r"""\begin{frame}{El método nuevo gana en todas las comparaciones}
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Método & Tiempo (s) & Nodos \\ \midrule
+Base      & 120 & 5400 \\
+Nuevo     & \alert{64} & \alert{2900} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{itemize}
+  \item Reduce el tiempo casi a la mitad.
+\end{itemize}
+\end{frame}""", (r"\\begin\{tabular", "incluye la tabla con un entorno tabular (booktabs)")),
+    "algorithm": (
+        "pseudocódigo con algorithm2e, simplificado a los pasos esenciales",
+        r"""\begin{frame}{El algoritmo tiene dos fases}
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja $x$}
+\KwOut{índice $i^*$}
+calcular pesos $w$\;
+\For{$i \in 1..n$}{ $s_i \gets w_i \cdot d_i$\; }
+\Return $\arg\max_i s_i$\;
+\end{algorithm}
+\end{frame}""", (r"\\begin\{algorithm\}", "incluye el pseudocódigo en un entorno algorithm (algorithm2e)")),
+}
+
+# Si la diapo cita un fragmento de este tipo, debe mostrarlo
+SOURCE_KINDS = {"tab": ("table", "columns"), "alg": ("algorithm",),
+                "eq": ("equation", "columns", "block", "algorithm")}
+SOURCE_CONTRACT = {"tab": KINDS["table"][2], "alg": KINDS["algorithm"][2], "eq": KINDS["equation"][2]}
 
 # ----------------------------------------------------------------------------
 # Esquemas
@@ -74,7 +161,7 @@ SLIDES_MARK = "%%SLIDES%%"
 class SlideSpec(BaseModel):
     title: str
     bullets: list[str]
-    kind: Literal["title", "bullets", "equation", "algorithm", "table"]
+    kind: Literal["title", "bullets", "columns", "block", "equation", "algorithm", "table"]
     sources: list[str] = Field(default_factory=list,
                                description="IDs de fragmentos que usa la diapo")
 
@@ -386,6 +473,7 @@ def describe_limits(lim: dict) -> str:
         out.append("sin \\color ni \\textcolor")
     if lim["prohibir_vspace_negativo"]:
         out.append("sin \\vspace negativo")
+    out.append(f"máximo {lim['max_fraccion_vinetas']:.0%} de diapositivas solo con viñetas")
     out.append("tamaños de letra fuera de tablas/algoritmos: " + (", ".join(lim["tamanos_permitidos"]) or "ninguno"))
     return "; ".join(out)
 
@@ -395,6 +483,15 @@ def _plain_words(s: str) -> int:
     s = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?", " ", s)
     s = re.sub(r"[{}\\]", " ", s)
     return len(s.split())
+
+
+def kind_check(frame: str, kind: str, sources: list[str]) -> list[str]:
+    """El frame debe tener el formato de su tipo y mostrar las tablas/algoritmos/ecuaciones que cita."""
+    body = re.sub(r"(?<!\\)%.*", "", frame)
+    rules = [KINDS[kind][2]] if kind in KINDS and KINDS[kind][2] else []
+    rules += [SOURCE_CONTRACT[p] for p in SOURCE_CONTRACT
+              if any(re.fullmatch(p + r"\d+", c) for c in sources)]
+    return [f"Formato ({kind}): {msg}" for pat, msg in dict(rules).items() if not re.search(pat, body)]
 
 
 def style_check(frame: str, lim: dict) -> list[str]:
@@ -457,6 +554,13 @@ Devuelve:
 - slides: la primera con kind='title' y sin sources. Cada una de las demás debe listar en sources \
 los IDs exactos de los fragmentos que necesita (incluidos eq*, tab*, alg* si usa esa ecuación, \
 tabla o algoritmo). Si un tema no cabe en los límites, divídelo en dos diapositivas.
+- kind: elige el formato que mejor muestre cada idea y VARÍALOS a lo largo de la presentación:
+{kinds}
+  Si citas un tab*, la diapo es table o columns y muestra esa tabla; si citas un alg*, es \
+algorithm; si citas un eq*, muestra la ecuación. Las definiciones del método (fórmulas que lo \
+definen) deben aparecer en display, no descritas con palabras.
+- bullets: el contenido que debe cubrir la diapo (ideas y datos concretos: cifras, nombres), \
+no el texto literal de viñetas.
 
 Guía de estilo:
 {guide}
@@ -480,9 +584,13 @@ Guía de estilo:
 {guide}
 Límites obligatorios (se verifican automáticamente): {limits}
 
-Tipo: {kind}
+Tipo: {kind} ({kind_desc})
+Ejemplo de formato para este tipo (solo la estructura; el contenido es inventado y no debe copiarse):
+{kind_example}
+Puedes combinar con un alertblock o exampleblock para el mensaje clave si cabe.
+
 Título: {title}
-Puntos a cubrir:
+Contenido a cubrir (ideas y datos, no viñetas literales):
 {bullets}
 
 CONTEXTO:
@@ -599,6 +707,15 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
             errs.append(f"Diapositiva {i} ('{s.title}') cita fragmentos inexistentes: {bad}")
         if s.kind != "title" and not s.sources:
             errs.append(f"Diapositiva {i} ('{s.title}') no tiene sources")
+        for pref, kinds in SOURCE_KINDS.items():
+            if any(re.fullmatch(pref + r"\d+", c) for c in s.sources) and s.kind not in kinds:
+                errs.append(f"Diapositiva {i} ('{s.title}') cita {pref}* pero es kind='{s.kind}': "
+                            f"usa {' o '.join(kinds)}, o quita ese fragmento de sources")
+    content = [s for s in o.slides if s.kind != "title"]
+    n_bul = sum(s.kind == "bullets" for s in content)
+    if len(content) >= 4 and n_bul > lim["max_fraccion_vinetas"] * len(content):
+        errs.append(f"{n_bul} de {len(content)} diapositivas son solo viñetas; máximo "
+                    f"{lim['max_fraccion_vinetas']:.0%}. Usa columns, block, equation o table")
     return errs
 
 
@@ -610,6 +727,7 @@ def outline(state: State) -> dict:
     feedback = ""
     for _ in range(MAX_OUTLINE_ATTEMPTS):
         o = call_structured(MODEL_OUTLINE, Outline, OUTLINE_PROMPT.format(
+            kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide=guide or "-", limits=describe_limits(lim)))
         errs = validate_outline(o, chunks, lim)
@@ -726,7 +844,8 @@ def write_slide(s: SlideState) -> dict:
         return {"frame": "\\begin{frame}[plain]\n\\titlepage\n\\end{frame}"}
     frame = call_text(MODEL_SLIDES, SLIDE_PROMPT.format(
         macros=s["macros"], packages=s["packages"], guide=s["style_guide"],
-        limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"], title=spec["title"],
+        limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"],
+        kind_desc=KINDS[spec["kind"]][0], kind_example=KINDS[spec["kind"]][1], title=spec["title"],
         bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"]))
     return {"frame": frame}
 
@@ -736,7 +855,9 @@ def compile_slide(s: SlideState) -> dict:
     if not errors:
         tex, offset = standalone(s["head"], s["frame"])
         errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] == "title")
-    style = [] if s["spec"]["kind"] == "title" else style_check(s["frame"], s["limits"])
+    spec = s["spec"]
+    style = [] if spec["kind"] == "title" else (
+        kind_check(s["frame"], spec["kind"], spec["sources"]) + style_check(s["frame"], s["limits"]))
     return {"errors": errors, "style_errors": style}
 
 
