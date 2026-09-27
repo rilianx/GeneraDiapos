@@ -74,4 +74,11 @@ print("refinados:", calls["refine"])
 print((out / "informe.md").read_text())
 assert (out / "presentacion.pdf").exists()
 assert not res["log_errors"]
+# Consumo de tokens: se acumula por modelo y aparece en el informe
+class _Msg:
+    usage_metadata = {"input_tokens": 1200, "output_tokens": 300}
+bg.USO.clear()
+bg.registrar_uso("m", _Msg()); bg.registrar_uso("m", _Msg())
+assert bg.USO["m"] == {"llamadas": 2, "entrada": 2400, "salida": 600}
+assert "| **Total** | 2 | 2,400 | 600 | 3,000 |" in bg.informe_uso()
 print("OK")
