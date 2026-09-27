@@ -132,6 +132,14 @@ assert "no tiene datos" in bg.filas_repetidas(r"\begin{tabular}{@{}lc@{}} X & --
 blk = r"\begin{frame}{T}" + r"\begin{block}{x}y\end{block}" * 3 + r"\end{frame}"
 assert any("bloques" in e for e in bg.style_check(blk, bg.STYLE_DEFAULTS))
 
+# Si un refinado rompe la compilación, se conserva la última versión que compilaba
+ok_frame = r"\begin{frame}{Ok}\begin{block}{a}b\end{block}\end{frame}"
+st = {"idx": 1, "frame": "roto", "best_frame": ok_frame, "errors": ["Error X"], "style_errors": [],
+      "fact_errors": [], "spec": {"kind": "block", "sources": ["sec1"], "title": "Ok", "bullets": []},
+      "limits": bg.STYLE_DEFAULTS, "context": "", "attempts": 3}
+_, frame, status, _, warns = bg.finish_slide(st)["frames"][0]
+assert status == "ok" and frame == ok_frame and "última versión que compilaba" in warns[0]
+
 # Consumo de tokens: se acumula por modelo y aparece en el informe
 class _Msg:
     usage_metadata = {"input_tokens": 1200, "output_tokens": 300}

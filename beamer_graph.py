@@ -56,8 +56,9 @@ REASONING_OUTLINE = os.environ.get("LLM_REASONING_OUTLINE") or "medium"
 REASONING_SLIDES = os.environ.get("LLM_REASONING_SLIDES") or None
 # Revisor de afirmaciones por diapositiva (juez LLM contra los fragmentos fuente)
 MODEL_REVIEW = os.environ.get("LLM_MODEL_REVIEW") or MODEL_SLIDES
-REASONING_REVIEW = os.environ.get("LLM_REASONING_REVIEW") or "low"
-MAX_SLIDE_ATTEMPTS = 3
+REASONING_REVIEW = os.environ.get("LLM_REASONING_REVIEW") or "medium"
+MAX_SLIDE_ATTEMPTS = 3      # refinados por compilación/estilo
+MAX_REVIEWS = 2             # revisión inicial + una verificación tras corregir afirmaciones
 MAX_GLOBAL_ATTEMPTS = 2
 MAX_OUTLINE_ATTEMPTS = 3
 OVERFULL_TOLERANCE_PT = 2.0
@@ -240,6 +241,8 @@ class SlideState(TypedDict, total=False):
     damaged: list[str]      # tablas citadas que la extracción dejó dañadas
     style_errors: list[str]
     fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
+    reviews: int            # revisiones hechas (presupuesto propio, no gasta attempts)
+    best_frame: str         # última versión que compiló: nunca se pierde
     frame: str
     errors: list[str]
     warnings: list[str]
@@ -690,7 +693,9 @@ tabla o algoritmo). Si un tema no cabe en los límites, divídelo en dos diaposi
 - kind: elige el formato que mejor muestre cada idea y VARÍALOS a lo largo de la presentación:
 {kinds}
   Cita un tab* solo si la diapo muestra esa tabla (kind table o columns); cita un eq* si muestra \
-esa ecuación. Las fórmulas que definen el método deben aparecer en display, no descritas con \
+esa ecuación. Si un tab* está marcado como TABLA DAÑADA, no lo reemplaces por otra tabla del \
+paper: arma la tabla con las cifras que da el texto de esa sección (cita la sección), o usa otro \
+formato. Las fórmulas que definen el método deben aparecer en display, no descritas con \
 palabras. Si el algoritmo es central, dedícale una diapo algorithm.
 - bullets: el contenido que debe cubrir la diapo (ideas y datos concretos: cifras, nombres), \
 no el texto literal de viñetas.
@@ -760,14 +765,18 @@ CONTEXTO (para verificar datos):
 REVIEW_SLIDE_PROMPT = r"""Eres un revisor exigente. Verifica esta diapositiva contra el CONTEXTO, que \
 es la única fuente válida (fragmentos del paper).
 
-Enumera cada afirmación verificable de la diapositiva, incluido el título: hechos, cifras y a \
-qué método/métrica/configuración corresponden, comparaciones, causas y conclusiones. Omite \
-frases puramente introductorias. Para cada una da un veredicto:
-- respaldada: la fuente la dice o se deduce directamente.
-- no_respaldada: la fuente no la contiene (p. ej. trabajo futuro o extensiones inventadas).
-- contradicha: la fuente dice otra cosa (cifra atribuida al método o métrica equivocada, \
-trabajo futuro presentado como hecho, dirección de una comparación invertida).
-En evidencia cita brevemente la fuente o explica la discrepancia. Ignora el formato LaTeX.
+Enumera solo las afirmaciones sustantivas: hechos, cifras y a qué método/métrica/configuración \
+corresponden, comparaciones, causas y conclusiones. NO evalúes rótulos ni encabezados (títulos de \
+bloque, "Idea clave", "Contexto", nombres de sección), frases introductorias ni el formato LaTeX. \
+Una paráfrasis o resumen fiel de la fuente cuenta como respaldada, aunque use otras palabras. \
+Veredictos:
+- respaldada: la fuente lo dice o se deduce directamente.
+- no_respaldada: una afirmación sustantiva que la fuente no contiene (p. ej. extensiones o \
+trabajo futuro inventados).
+- contradicha: SOLO si puedes citar el pasaje de la fuente que dice otra cosa (cifra atribuida al \
+método o métrica equivocada, trabajo futuro presentado como hecho, comparación invertida).
+En evidencia cita textualmente el pasaje de la fuente (para contradicha es obligatorio).
+Ante la duda, respaldada: un falso positivo cuesta un refinado innecesario.
 
 DIAPOSITIVA:
 {frame}
@@ -943,7 +952,8 @@ def fan_out(state: State) -> list[Send]:
         "idx": i, "spec": s, "head": state["head"], "notation": o["notation"],
         "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": "\n\n".join(chunks[c] for c in s["sources"]),
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
-        "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "warnings": [],
+        "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
+        "warnings": [],
     }) for i, s in enumerate(o["slides"])]
 
 
@@ -1040,13 +1050,16 @@ def compile_slide(s: SlideState) -> dict:
     style = [] if spec["kind"] == "title" else (
         kind_check(s["frame"], spec["kind"], spec["sources"], tuple(s.get("damaged", ())))
         + style_check(s["frame"], s["limits"]))
-    return {"errors": errors, "style_errors": style}
+    out = {"errors": errors, "style_errors": style}
+    if not errors:
+        out["best_frame"] = s["frame"]
+    return out
 
 
 def route_slide(s: SlideState) -> str:
     if (s["errors"] or s["style_errors"]) and s["attempts"] < MAX_SLIDE_ATTEMPTS:
         return "refine_slide"
-    if s["errors"] or s["spec"]["kind"] == "title":
+    if s["errors"] or s["spec"]["kind"] == "title" or s.get("reviews", 0) >= MAX_REVIEWS:
         return "finish_slide"
     return "review_slide"                       # compila: se revisan las afirmaciones
 
@@ -1056,12 +1069,12 @@ def review_slide(s: SlideState) -> dict:
                         prompt=REVIEW_SLIDE_PROMPT.format(frame=s["frame"], context=s["context"]))
     bad = [f"{c.veredicto}: «{c.afirmacion}» ({c.evidencia})"
            for c in r.claims if c.veredicto in ("no_respaldada", "contradicha")]
-    return {"fact_errors": bad}
+    return {"fact_errors": bad, "reviews": s.get("reviews", 0) + 1}
 
 
 def route_review(s: SlideState) -> str:
-    if s["fact_errors"] and s["attempts"] < MAX_SLIDE_ATTEMPTS:
-        return "refine_slide"
+    if s["fact_errors"] and s["reviews"] < MAX_REVIEWS:
+        return "refine_facts"
     return "finish_slide"
 
 
@@ -1075,13 +1088,29 @@ def refine_slide(s: SlideState) -> dict:
     return {"frame": frame, "attempts": s["attempts"] + 1}
 
 
+def refine_facts(s: SlideState) -> dict:
+    """Corrige afirmaciones: usa el presupuesto del revisor, no el de compilación/estilo."""
+    return {"frame": refine_slide(s)["frame"]}
+
+
 def finish_slide(s: SlideState) -> dict:
-    status = "failed" if s["errors"] else "ok"   # el estilo nunca descarta una diapo que compila
-    warns = [f"Compilación: {e}" for e in s["errors"]]
-    warns += [f"Estilo: {e}" for e in s["style_errors"]]
+    frame, warns = s["frame"], []
+    if s["errors"] and s.get("best_frame"):
+        # un refinado rompió la compilación: se vuelve a la última versión que compilaba
+        frame = s["best_frame"]
+        spec = s["spec"]
+        style = kind_check(frame, spec["kind"], spec["sources"], tuple(s.get("damaged", ()))) + \
+            style_check(frame, s["limits"])
+        warns.append("Se conservó la última versión que compilaba (los refinados posteriores fallaron)")
+        errors = []
+    else:
+        style, errors = s["style_errors"], s["errors"]
+    status = "failed" if errors else "ok"        # el estilo nunca descarta una diapo que compila
+    warns += [f"Compilación: {e}" for e in errors]
+    warns += [f"Estilo: {e}" for e in style]
     warns += [f"Revisor: {e}" for e in s.get("fact_errors", [])]
-    warns += soft_checks(s["frame"], s["context"] + "\n" + json.dumps(s["spec"]))
-    return {"frames": [(s["idx"], s["frame"], status, s["attempts"], warns)]}
+    warns += soft_checks(frame, s["context"] + "\n" + json.dumps(s["spec"]))
+    return {"frames": [(s["idx"], frame, status, s["attempts"], warns)]}
 
 # ----------------------------------------------------------------------------
 # Construcción de los grafos
@@ -1092,11 +1121,13 @@ def build_slide_graph():
     g.add_node("compile_slide", compile_slide)
     g.add_node("refine_slide", refine_slide)
     g.add_node("review_slide", review_slide)
+    g.add_node("refine_facts", refine_facts)
     g.add_node("finish_slide", finish_slide)
     g.add_edge(START, "write_slide")
     g.add_edge("write_slide", "compile_slide")
     g.add_conditional_edges("compile_slide", route_slide, ["refine_slide", "review_slide", "finish_slide"])
-    g.add_conditional_edges("review_slide", route_review, ["refine_slide", "finish_slide"])
+    g.add_conditional_edges("review_slide", route_review, ["refine_facts", "finish_slide"])
+    g.add_edge("refine_facts", "compile_slide")
     g.add_edge("refine_slide", "compile_slide")
     g.add_edge("finish_slide", END)
     return g.compile()
