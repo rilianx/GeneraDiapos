@@ -4,20 +4,82 @@ Genera presentaciones LaTeX Beamer a partir de papers científicos con un pipeli
 de LangGraph. El modelo escribe **una diapositiva a la vez**, cada una se compila y
 valida por separado, y solo las que pasan se ensamblan en tu plantilla.
 
+**Flujo en GitHub** (con revisión humana del guion por defecto):
+
+```mermaid
+flowchart LR
+    A([Subes un paper<br/>a papers/ en main]) --> B{"REVISAR_GUION<br/>(por defecto true)"}
+    B -->|true| C["Workflow: --solo-guion<br/>1 llamada LLM"]
+    C --> D[/"PR «Guion para revisar»<br/>guiones/nombre.json + .md"/]
+    D --> E[/"Persona revisa fuentes y tipos<br/>edita el .json si hace falta"/]
+    E --> F["Fusiona el PR<br/>guiones/nombre.json llega a main"]
+    F --> G["Workflow: --guion<br/>grafo sin generar guion"]
+    B -->|false| H["Workflow: completo<br/>grafo con guion del LLM"]
+    G --> I[/"PR «Presentaciones generadas»<br/>presentaciones/nombre/"/]
+    H --> I
+    I --> J[/"Persona revisa informe.md<br/>y fusiona"/]
+    classDef human fill:#e6f4ea,stroke:#2f855a,color:#000
+    classDef wf fill:#e3eefc,stroke:#2b6cb0,color:#000
+    class D,E,F,I,J human
+    class C,G,H wf
+```
+
+**Grafo de estados** (LangGraph; en naranjo los nodos que llaman al LLM, en verde la
+intervención humana):
+
 ```mermaid
 flowchart TD
-    ingest[ingest: paper → fragmentos] --> outline[outline: LLM → guion JSON]
-    outline --> review[review_outline: revisión humana opcional]
-    review -->|Send × N| S
-    subgraph S[Subgrafo por diapositiva]
-        write_slide --> compile_slide[compile_slide: lint + pdflatex + estilo]
-        compile_slide -->|error, intentos < 3| refine_slide
-        refine_slide --> compile_slide
+    start([paper: .pdf / .tex / .md]) --> ingest
+
+    subgraph PRINCIPAL["Grafo principal (State)"]
+        ingest["<b>ingest</b><br/>preflight de base.tex<br/>extracción + troceado<br/>sec* · eq* · tab* · alg*<br/>tablas: título, unión, dañadas"]
+        outline["<b>outline</b> · LLM guion<br/>razonamiento medium<br/>portada + agenda + secciones<br/>ajustar_kinds + validate_outline<br/>hasta 3 intentos con feedback"]
+        cargar["<b>cargar_guion</b><br/>guion revisado (--guion)<br/>sin LLM, misma validación"]
+        review_outline{"<b>review_outline</b><br/>¿--review?"}
+        pausa[/"pausa: la persona edita<br/>outline_borrador.json"/]
+        fan_out[["<b>fan_out</b><br/>Send × N diapositivas<br/>en paralelo"]]
+        assemble["<b>assemble</b><br/>frames dentro de base.tex<br/>\section{} por sección<br/>fallida → marcador pendiente"]
+        compile_full{"<b>compile_full</b><br/>pdflatex × 2"}
+        refine_global["<b>refine_global</b> · LLM<br/>solo el cuerpo, no la base"]
+        write_outputs(["<b>write_outputs</b><br/>presentacion.tex / .pdf<br/>outline.json · informe.md<br/>(avisos + tokens)"])
+
+        ingest -->|"sin outline_path"| outline
+        ingest -->|"outline_path"| cargar
+        outline --> review_outline
+        cargar --> review_outline
+        review_outline -->|no| fan_out
+        review_outline -->|sí| pausa --> fan_out
+        assemble --> compile_full
+        compile_full -->|"errores y global_attempts < 2"| refine_global --> compile_full
+        compile_full -->|"ok, o intentos agotados"| write_outputs
     end
-    compile_slide -->|ok| assemble[assemble: frames en base.tex]
-    assemble --> compile_full
-    compile_full -->|error| refine_global --> compile_full
-    compile_full -->|ok| out([write_outputs: .tex, .pdf, informe.md])
+
+    fan_out --> write_slide
+
+    subgraph SLIDE["Subgrafo por diapositiva (SlideState)"]
+        write_slide["<b>write_slide</b> · LLM<br/>plantilla del kind<br/>portada y agenda: sin LLM"]
+        compile_slide{"<b>compile_slide</b><br/>lint · pdflatex aislado<br/>kind_check · style_check<br/>si compila → best_frame"}
+        refine_slide["<b>refine_slide</b> · LLM<br/>errores + estilo + afirmaciones<br/>attempts + 1"]
+        review_slide{"<b>review_slide</b> · LLM revisor<br/>afirmaciones vs fuentes<br/>+ índice de tablas<br/>reviews + 1"}
+        refine_facts["<b>refine_facts</b> · LLM<br/>corrige afirmaciones<br/>no gasta attempts"]
+        finish_slide(["<b>finish_slide</b><br/>si falla y hay best_frame → la usa<br/>avisos: compilación, estilo,<br/>revisor, cifras"])
+
+        write_slide --> compile_slide
+        compile_slide -->|"errores o estilo<br/>y attempts < 3"| refine_slide --> compile_slide
+        compile_slide -->|"compila y reviews < 2<br/>(no portada)"| review_slide
+        compile_slide -->|"no compila tras 3,<br/>portada o reviews = 2"| finish_slide
+        review_slide -->|"afirmaciones sin respaldo<br/>y reviews < 2"| refine_facts --> compile_slide
+        review_slide -->|"todo respaldado,<br/>o ya se verificó"| finish_slide
+    end
+
+    finish_slide --> assemble
+
+    classDef llm fill:#fde7c8,stroke:#c77700,color:#000
+    classDef code fill:#e3eefc,stroke:#2b6cb0,color:#000
+    classDef human fill:#e6f4ea,stroke:#2f855a,color:#000
+    class outline,refine_global,write_slide,refine_slide,review_slide,refine_facts llm
+    class ingest,cargar,fan_out,assemble,compile_full,compile_slide,finish_slide,write_outputs,review_outline code
+    class pausa human
 ```
 
 ## Estructura
@@ -86,9 +148,11 @@ Por defecto hay **revisión humana del guion** (el paso más barato de corregir)
 
 1. Sube un paper a `papers/` en `main` → llega un PR **"Guion para revisar"** con
    `guiones/<nombre>.json` y una vista legible `guiones/<nombre>.md`.
-2. Revisa el orden, el tipo de cada diapo y sobre todo qué fragmentos usa cada una
-   (`sources`; las tablas del paper están listadas al inicio del `.md`). Si algo está
-   mal, edita el `.json` en el mismo PR.
+2. Empieza por la sección **⚠ Revisar primero** del `.md`: dudas que el propio modelo
+   declaró (campo `aviso`) y diapos que mencionan métodos que no aparecen en las tablas
+   que citan, o que citan una tabla dañada. Luego revisa el orden, el tipo de cada diapo
+   y qué fragmentos usa (`sources`; las tablas del paper están listadas al inicio). Si
+   algo está mal, edita el `.json` en el mismo PR.
 3. Fusiona el PR → se generan las diapositivas desde ese guion y llega un segundo PR
    con `presentaciones/<nombre>/` (`presentacion.tex`, `.pdf`, `outline.json`,
    `informe.md`). El PDF también queda en los artefactos del run.
@@ -112,6 +176,7 @@ En local lo equivalente es `--solo-guion guiones/x.json` y luego `--guion guione
 | Revisor de afirmaciones | variables `LLM_MODEL_REVIEW` (por defecto el de diapos) y `LLM_REASONING_REVIEW` (por defecto `medium`) | cada diapo que compila se verifica contra sus fragmentos; lo no respaldado se corrige una vez (presupuesto propio, `MAX_REVIEWS`) y, si persiste, queda en `informe.md` |
 | Preámbulo, tema, macros | `base.tex` | debe tener exactamente un `%%SLIDES%%` |
 | Título/autores | `<<TITLE>>`, `<<AUTHORS>>`, `<<VENUE>>` en `base.tex` | se rellenan desde el guion; si los escribes a mano se respetan |
+| Secciones y agenda | `[estructura]` en `estilo.toml` | `secciones` (orden de la presentación) y `agenda` (diapo con `\tableofcontents`); la portada siempre va primero |
 | Reglas de estilo | `estilo.toml` | `[guia]` va al prompt; `[limites]` se verifica en código |
 | Reintentos, tolerancias, nº de diapos | constantes al inicio de `beamer_graph.py` | `MAX_SLIDE_ATTEMPTS`, `OVERFULL_TOLERANCE_PT`, `N_SLIDES`… |
 | Extracción de PDF | `--extractor marker` | mejor con ecuaciones; requiere `pip install marker-pdf` |
