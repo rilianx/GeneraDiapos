@@ -183,9 +183,10 @@ python beamer_graph.py --claude trabajo/x      # repetir hasta que diga "Listo"
 ```
 
 En Claude Code basta con pedir "haz la presentación de papers/x.pdf": la skill
-`.claude/skills/paper2beamer/` sigue ese ciclo (y lee como imagen las páginas con
-tablas al armar el guion). `validar.py`, en la misma carpeta, aplica los chequeos a
-un `.tex` editado a mano.
+`.claude/skills/paper2beamer/` es mínima: solo explica el ciclo, porque lo que hay que
+hacer en cada paso (leer el paper como imagen, escribir una diapo, revisarla, esperar
+tu aprobación del guion) viaja en el texto de cada tarea, generado por el grafo.
+`validar.py`, en la misma carpeta, aplica los chequeos a un `.tex` editado a mano.
 
 ## Configuración
 

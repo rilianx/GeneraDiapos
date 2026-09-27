@@ -64,7 +64,8 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
             (d / "guion.json").write_text(json.dumps(p["outline"], ensure_ascii=False, indent=2))
             (d / "guion.md").write_text(bg.guion_md(p["outline"], values.get("chunks", {}), meta["paper"]))
             cuerpo = (f"Revisión humana del guion. Muestra `{d}/guion.md` al usuario (empieza por "
-                      f"«⚠ Revisar primero»). Cuando lo apruebe, con o sin cambios, escribe el guion "
+                      f"«⚠ Revisar primero») y ESPERA su respuesta: no asumas la aprobación. Cuando "
+                      f"lo apruebe, con o sin cambios, escribe el guion "
                       f"final (mismo formato que `{d}/guion.json`) en el archivo de respuesta.")
         else:
             ext = "tex" if p["formato"] == "texto" else "json"
