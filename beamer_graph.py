@@ -316,6 +316,8 @@ def restaurar_escapes(obj):
         # a veces el modelo emite \u0000 + hex en vez del carácter (á → "\0e1")
         obj = re.sub("\x00([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), obj)
         obj = _NEWLINE_CMD.sub(lambda _: "\\n", obj)
+        # y otras veces escapa de más: "\\\\texttt" (salto de línea + texto) → "\\texttt"
+        obj = re.sub(r"\\\\(?=[A-Za-z])", lambda _: "\\", obj)
         return "".join(_CONTROL.get(c, c) for c in obj)
     if isinstance(obj, list):
         return [restaurar_escapes(x) for x in obj]
