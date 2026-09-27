@@ -47,3 +47,5 @@ tamanos_permitidos = ['\small']
 # Guion: fracción máxima de diapositivas que son solo viñetas (el resto: columns,
 # block, equation, table, algorithm). Se aplica con 4 o más diapos de contenido.
 max_fraccion_vinetas = 0.4
+max_bloques = 2                     # block/alertblock/exampleblock por diapositiva
+prohibir_alert_en_alertblock = true

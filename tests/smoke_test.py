@@ -90,6 +90,41 @@ assert bg.kind_check(r"\begin{frame}{T}$x$\end{frame}", "block", ["eq1"]) == [
     "Formato (block): usa al menos un block, alertblock o exampleblock"]
 assert bg.SlideSpec(title="T", bullets=[], kind="alertblock").kind == "block"
 
+# Tablas en markdown: título pegado, numeración del paper, trozos unidos, rotas marcadas
+MD = """# Resultados
+Texto.
+
+|a|1<br>2|3<br>4|
+|---|---|---|
+|b|5<br>6|7<br>8<br>9|
+
+123
+
+J Glob Optim
+
+|c|9|10|
+|---|---|---|
+
+**Table 2** Tiempos por variante.
+
+|Método|t|
+|---|---|
+|A|1.5|
+"""
+c = bg.chunk_document(MD, "md")
+assert sorted(k for k in c if k.startswith("tab")) == ["tab1", "tab2"], list(c)
+assert bg.TABLA_DANADA in c["tab1"] and "|c|9|10|" in c["tab1"]       # trozos unidos y marcada
+assert c["tab2"].startswith("Table 2: Tiempos por variante.") and bg.TABLA_DANADA not in c["tab2"]
+o = bg.ajustar_kinds(bg.Outline(title="", authors="", venue="", notation="", slides=[
+    bg.SlideSpec(title="T", bullets=[], kind="bullets", sources=["tab1"])]), c)
+assert o.slides[0].kind == "bullets"                     # una tabla dañada no fuerza el tipo table
+
+# Filas copiadas y exceso de bloques
+dup = r"\begin{tabular}{lc} A & 20429 & 1.0 \\ B & 20429 & 1.0 \\ C & 19181 & 0.6 \\ \end{tabular}"
+assert len(bg.filas_repetidas(dup)) == 1
+blk = r"\begin{frame}{T}" + r"\begin{block}{x}y\end{block}" * 3 + r"\end{frame}"
+assert any("bloques" in e for e in bg.style_check(blk, bg.STYLE_DEFAULTS))
+
 # Consumo de tokens: se acumula por modelo y aparece en el informe
 class _Msg:
     usage_metadata = {"input_tokens": 1200, "output_tokens": 300}

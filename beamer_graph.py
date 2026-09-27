@@ -69,7 +69,7 @@ STYLE_DEFAULTS = {
     "max_caracteres_titulo": 60, "max_alerts": 2, "max_negritas": 3,
     "sin_punto_final": False, "prohibir_colores_directos": True,
     "prohibir_vspace_negativo": True, "tamanos_permitidos": [r"\small"],
-    "max_fraccion_vinetas": 0.4,
+    "max_fraccion_vinetas": 0.4, "max_bloques": 2, "prohibir_alert_en_alertblock": True,
 }
 SLIDES_MARK = "%%SLIDES%%"
 
@@ -219,6 +219,7 @@ class SlideState(TypedDict, total=False):
     packages: str
     style_guide: str
     limits: dict
+    damaged: list[str]      # tablas citadas que la extracción dejó dañadas
     style_errors: list[str]
     frame: str
     errors: list[str]
@@ -349,6 +350,9 @@ def chunk_document(text: str, fmt: str) -> dict[str, str]:
         take(r"^(?:\*\*)?Algorithm \d+.*?(?=\n\s*\n)", "alg", re.M | re.S)
         heading = r"^#{1,4}\s+(.+)$"
 
+    if fmt != "tex":
+        text = _ordenar_tablas_md(text, chunks)
+
     parts = re.split(heading, text, flags=re.M)
     sections = [("Preámbulo", parts[0])] + list(zip(parts[1::2], parts[2::2]))
     n = 0
@@ -359,6 +363,50 @@ def chunk_document(text: str, fmt: str) -> dict[str, str]:
         n += 1
         chunks[f"sec{n}"] = f"{title.strip()}\n{content}"
     return chunks
+
+TABLA_DANADA = ("[TABLA DAÑADA EN LA EXTRACCIÓN: celdas mezcladas o sin encabezados. "
+                "No la reproduzcas como tabla; toma las cifras del texto de la sección.]")
+_CAPTION = re.compile(r"\*\*Table\s+(\d+)\*\*[.:]?\s*([^\n]*)")
+# Entre dos trozos de una tabla partida solo hay cabeceras/pies de página (números, revista)
+_ENTRE_PAGINAS = re.compile(r"^(?:\s|\d+|[A-Z][A-Za-z. ]{0,40})*$")
+
+
+def tabla_danada(md: str) -> bool:
+    """Heurística: pymupdf4llm pega celdas con <br> cuando no entiende la tabla
+    (típico de tablas rotadas o partidas entre páginas)."""
+    rows = [r for r in md.splitlines() if r.startswith("|") and not re.fullmatch(r"[|\-: ]+", r)]
+    return sum(r.count("<br>") for r in rows[1:]) > 2
+
+
+def _ordenar_tablas_md(text: str, chunks: dict[str, str]) -> str:
+    """Pega a cada tabla su título, la numera como en el paper y une los trozos de
+    una tabla partida en varias páginas. Las tablas rotas quedan marcadas."""
+    marks = list(re.finditer(r" \[(tab\d+)\] ", text))
+    if not marks:
+        return text
+    tabs = {m.group(1): chunks.pop(m.group(1)) for m in marks}
+    groups: list[dict] = []                # {num, caption, ids}
+    used, prev_end = set(), 0
+    for m in marks:
+        before = text[max(prev_end, m.start() - 600):m.start()]
+        caps = [c for c in _CAPTION.finditer(before) if c.group(1) not in used]
+        if caps:
+            used.add(caps[-1].group(1))
+            groups.append({"num": int(caps[-1].group(1)), "caption": caps[-1].group(2).strip(), "ids": [m.group(1)]})
+        elif groups and _ENTRE_PAGINAS.match(text[prev_end:m.start()]):
+            groups[-1]["ids"].append(m.group(1))          # continuación de la tabla anterior
+        else:
+            num = (groups[-1]["num"] + 1) if groups else 1
+            groups.append({"num": num, "caption": "", "ids": [m.group(1)]})
+        prev_end = m.end()
+    for g in groups:
+        new = f"tab{g['num']}"
+        md = "\n".join(tabs[i] for i in g["ids"])
+        head = f"Table {g['num']}" + (f": {g['caption']}" if g["caption"] else "")
+        chunks[new] = head + "\n" + (TABLA_DANADA + "\n" if tabla_danada(md) else "") + md
+        for k, old in enumerate(g["ids"]):
+            text = text.replace(f" [{old}] ", f" [@{new}] " if k == 0 else " ", 1)
+    return text.replace("[@tab", "[tab")
 
 # ----------------------------------------------------------------------------
 # LaTeX: compilación, log, lint
@@ -491,6 +539,9 @@ def describe_limits(lim: dict) -> str:
     if lim["prohibir_vspace_negativo"]:
         out.append("sin \\vspace negativo")
     out.append(f"máximo {lim['max_fraccion_vinetas']:.0%} de diapositivas solo con viñetas")
+    out.append(f"máximo {lim['max_bloques']} bloques por diapositiva")
+    if lim["prohibir_alert_en_alertblock"]:
+        out.append("sin \\alert dentro de alertblock")
     out.append("tamaños de letra fuera de tablas/algoritmos: " + (", ".join(lim["tamanos_permitidos"]) or "ninguno"))
     return "; ".join(out)
 
@@ -502,13 +553,33 @@ def _plain_words(s: str) -> int:
     return len(s.split())
 
 
-def kind_check(frame: str, kind: str, sources: list[str]) -> list[str]:
+def kind_check(frame: str, kind: str, sources: list[str], damaged: tuple = ()) -> list[str]:
     """El frame debe tener el formato de su tipo y mostrar las tablas/algoritmos/ecuaciones que cita."""
     body = re.sub(r"(?<!\\)%.*", "", frame)
     rules = [KINDS[kind][2]] if kind in KINDS and KINDS[kind][2] else []
-    if any(re.fullmatch(r"tab\d+", c) for c in sources):      # una tabla citada se muestra como tabla
+    if any(re.fullmatch(r"tab\d+", c) and c not in damaged for c in sources):  # tabla citada → se muestra
         rules.append(KINDS["table"][2])
-    return [f"Formato ({kind}): {msg}" for pat, msg in dict(rules).items() if not re.search(pat, body)]
+    errs = [f"Formato ({kind}): {msg}" for pat, msg in dict(rules).items() if not re.search(pat, body)]
+    return errs + filas_repetidas(body)
+
+
+def filas_repetidas(body: str) -> list[str]:
+    """Filas de tabla con exactamente los mismos números: señal de datos copiados/inventados."""
+    errs = []
+    for tab in re.findall(r"\\begin\{tabular\*?\}.*?\\end\{tabular\*?\}", body, re.S):
+        seen: dict[tuple, str] = {}
+        for row in tab.split(r"\\"):
+            cells = row.split("&")
+            nums = tuple(re.findall(r"\d[\d.,]*", "&".join(cells[1:])))
+            if len(nums) < 2:
+                continue
+            name = re.sub(r"\\[a-zA-Z]+|[{}]", "", cells[0]).split("\n")[-1].strip()
+            if nums in seen:
+                errs.append(f"Las filas '{seen[nums]}' y '{name}' de la tabla tienen los mismos números: "
+                            "no copies filas; incluye solo elementos con datos en la fuente")
+            else:
+                seen[nums] = name
+    return errs
 
 
 def style_check(frame: str, lim: dict) -> list[str]:
@@ -548,6 +619,12 @@ def style_check(frame: str, lim: dict) -> list[str]:
         errs.append(f"Demasiadas negritas (máximo {lim['max_negritas']})")
     if lim["prohibir_colores_directos"] and re.search(r"\\(text)?color\b", body):
         errs.append("Colores directos no permitidos: usa \\alert o macros de la base")
+    n_blocks = len(re.findall(r"\\begin\{(?:alert|example)?block\}", body))
+    if n_blocks > lim["max_bloques"]:
+        errs.append(f"{n_blocks} bloques; máximo {lim['max_bloques']}: combina con texto, lista o fórmula")
+    if lim["prohibir_alert_en_alertblock"] and any(
+            "\\alert" in b for b in re.findall(r"\\begin\{alertblock\}(.*?)\\end\{alertblock\}", body, re.S)):
+        errs.append("\\alert dentro de alertblock es redundante: quítalo")
     if lim["prohibir_vspace_negativo"] and re.search(r"\\vspace\*?\{\s*-", body):
         errs.append("\\vspace negativo no permitido: reduce contenido en vez de comprimir")
 
@@ -595,6 +672,10 @@ Reglas:
 - Macros disponibles: {macros}
 - Notación común (respétala): {notation}
 - Usa solo información del CONTEXTO. No inventes cifras ni resultados.
+- Tablas: solo filas y columnas que existan en una tabla del CONTEXTO o cifras explícitas del \
+texto. Si un elemento no tiene datos, NO inventes ni copies su fila: omítelo o arma la tabla con \
+las cifras del texto. No crees columnas agregadas (mejor/peor, promedios) que la fuente no tenga. \
+Respeta qué mide cada cifra (p. ej. "ganancia frente al mejor competidor" no es "frente a X").
 - Debe caber en una pantalla. Si el contenido es mucho, prioriza y resume.
 
 Guía de estilo:
@@ -712,11 +793,13 @@ def ingest(state: State) -> dict:
     return {"chunks": chunks}
 
 
-def ajustar_kinds(o: Outline) -> Outline:
+def ajustar_kinds(o: Outline, chunks: dict | None = None) -> Outline:
+    chunks = chunks or {}
     for s in o.slides:
         if s.kind == "bullets":
             for pref, kind in BULLETS_UPGRADE.items():
-                if any(re.fullmatch(pref + r"\d+", c) for c in s.sources):
+                if any(re.fullmatch(pref + r"\d+", c) and TABLA_DANADA not in chunks.get(c, "")
+                       for c in s.sources):
                     s.kind = kind
                     break
     return o
@@ -762,7 +845,7 @@ def outline(state: State) -> dict:
             kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide=guide or "-", limits=describe_limits(lim)))
-        o = ajustar_kinds(o)
+        o = ajustar_kinds(o, chunks)
         errs = validate_outline(o, chunks, lim)
         soft = variedad_outline(o, lim)
         if not errs and (not soft or attempt == MAX_OUTLINE_ATTEMPTS):
@@ -799,6 +882,7 @@ def fan_out(state: State) -> list[Send]:
     return [Send("slide", {
         "idx": i, "spec": s, "head": state["head"], "notation": o["notation"],
         "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": "\n\n".join(chunks[c] for c in s["sources"]),
+        "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
         "attempts": 0, "errors": [], "style_errors": [], "warnings": [],
     }) for i, s in enumerate(o["slides"])]
 
@@ -893,7 +977,8 @@ def compile_slide(s: SlideState) -> dict:
         errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] == "title")
     spec = s["spec"]
     style = [] if spec["kind"] == "title" else (
-        kind_check(s["frame"], spec["kind"], spec["sources"]) + style_check(s["frame"], s["limits"]))
+        kind_check(s["frame"], spec["kind"], spec["sources"], tuple(s.get("damaged", ())))
+        + style_check(s["frame"], s["limits"]))
     return {"errors": errors, "style_errors": style}
 
 
