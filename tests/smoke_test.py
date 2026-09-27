@@ -80,14 +80,14 @@ chunks = {"sec1": "", "tab1": "", "eq1": ""}
 o = bg.Outline(title="", authors="", venue="", notation="", slides=[
     bg.SlideSpec(title="P", bullets=[], kind="title"), spec("bullets", ["sec1", "tab1"]),
     spec("bullets", ["sec1"]), spec("bullets", ["sec1"]), spec("block", ["sec1"])])
-errs = bg.validate_outline(o, chunks)
-assert any("cita tab*" in e for e in errs) and any("solo viñetas" in e for e in errs), errs
+o = bg.ajustar_kinds(o)
+assert o.slides[1].kind == "table"                       # viñetas que citan tab1 → table
+assert not bg.validate_outline(o, chunks)
+assert "solo viñetas" in bg.variedad_outline(o, bg.STYLE_DEFAULTS)[0]
 assert bg.kind_check(r"\begin{frame}{T}\begin{itemize}\item a\end{itemize}\end{frame}", "table", ["tab1"])
 assert not bg.kind_check(r"\begin{frame}{T}\begin{tabular}{l}a\end{tabular}\end{frame}", "table", ["tab1"])
 assert bg.kind_check(r"\begin{frame}{T}$x$\end{frame}", "block", ["eq1"]) == [
-    "Formato (block): usa al menos un block, alertblock o exampleblock",
-    "Formato (block): incluye al menos una ecuación en display (\\[ \\] o align)"]
-
+    "Formato (block): usa al menos un block, alertblock o exampleblock"]
 assert bg.SlideSpec(title="T", bullets=[], kind="alertblock").kind == "block"
 
 # Consumo de tokens: se acumula por modelo y aparece en el informe

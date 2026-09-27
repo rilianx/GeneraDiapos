@@ -154,10 +154,9 @@ KIND_ALIASES = {"alertblock": "block", "exampleblock": "block", "blocks": "block
                 "two_columns": "columns", "column": "columns", "itemize": "bullets",
                 "list": "bullets", "tabular": "table", "math": "equation", "pseudocode": "algorithm"}
 
-# Si la diapo cita un fragmento de este tipo, debe mostrarlo
-SOURCE_KINDS = {"tab": ("table", "columns"), "alg": ("algorithm",),
-                "eq": ("equation", "columns", "block", "algorithm")}
-SOURCE_CONTRACT = {"tab": KINDS["table"][2], "alg": KINDS["algorithm"][2], "eq": KINDS["equation"][2]}
+# Una diapo de solo viñetas que cita una tabla o ecuación pasa a mostrarla.
+# (Un alg* puede citarse como contexto sin mostrar el pseudocódigo.)
+BULLETS_UPGRADE = {"tab": "table", "eq": "equation"}
 
 # ----------------------------------------------------------------------------
 # Esquemas
@@ -500,8 +499,8 @@ def kind_check(frame: str, kind: str, sources: list[str]) -> list[str]:
     """El frame debe tener el formato de su tipo y mostrar las tablas/algoritmos/ecuaciones que cita."""
     body = re.sub(r"(?<!\\)%.*", "", frame)
     rules = [KINDS[kind][2]] if kind in KINDS and KINDS[kind][2] else []
-    rules += [SOURCE_CONTRACT[p] for p in SOURCE_CONTRACT
-              if any(re.fullmatch(p + r"\d+", c) for c in sources)]
+    if any(re.fullmatch(r"tab\d+", c) for c in sources):      # una tabla citada se muestra como tabla
+        rules.append(KINDS["table"][2])
     return [f"Formato ({kind}): {msg}" for pat, msg in dict(rules).items() if not re.search(pat, body)]
 
 
@@ -567,9 +566,9 @@ los IDs exactos de los fragmentos que necesita (incluidos eq*, tab*, alg* si usa
 tabla o algoritmo). Si un tema no cabe en los límites, divídelo en dos diapositivas.
 - kind: elige el formato que mejor muestre cada idea y VARÍALOS a lo largo de la presentación:
 {kinds}
-  Si citas un tab*, la diapo es table o columns y muestra esa tabla; si citas un alg*, es \
-algorithm; si citas un eq*, muestra la ecuación. Las definiciones del método (fórmulas que lo \
-definen) deben aparecer en display, no descritas con palabras.
+  Cita un tab* solo si la diapo muestra esa tabla (kind table o columns); cita un eq* si muestra \
+esa ecuación. Las fórmulas que definen el método deben aparecer en display, no descritas con \
+palabras. Si el algoritmo es central, dedícale una diapo algorithm.
 - bullets: el contenido que debe cubrir la diapo (ideas y datos concretos: cifras, nombres), \
 no el texto literal de viñetas.
 
@@ -706,6 +705,16 @@ def ingest(state: State) -> dict:
     return {"chunks": chunks}
 
 
+def ajustar_kinds(o: Outline) -> Outline:
+    for s in o.slides:
+        if s.kind == "bullets":
+            for pref, kind in BULLETS_UPGRADE.items():
+                if any(re.fullmatch(pref + r"\d+", c) for c in s.sources):
+                    s.kind = kind
+                    break
+    return o
+
+
 def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[str]:
     errs = []
     lim = lim or STYLE_DEFAULTS
@@ -722,16 +731,17 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
             errs.append(f"Diapositiva {i} ('{s.title}') cita fragmentos inexistentes: {bad}")
         if s.kind != "title" and not s.sources:
             errs.append(f"Diapositiva {i} ('{s.title}') no tiene sources")
-        for pref, kinds in SOURCE_KINDS.items():
-            if any(re.fullmatch(pref + r"\d+", c) for c in s.sources) and s.kind not in kinds:
-                errs.append(f"Diapositiva {i} ('{s.title}') cita {pref}* pero es kind='{s.kind}': "
-                            f"usa {' o '.join(kinds)}, o quita ese fragmento de sources")
+    return errs
+
+
+def variedad_outline(o: Outline, lim: dict) -> list[str]:
+    """Aviso (no bloquea): demasiadas diapos de solo viñetas."""
     content = [s for s in o.slides if s.kind != "title"]
     n_bul = sum(s.kind == "bullets" for s in content)
     if len(content) >= 4 and n_bul > lim["max_fraccion_vinetas"] * len(content):
-        errs.append(f"{n_bul} de {len(content)} diapositivas son solo viñetas; máximo "
-                    f"{lim['max_fraccion_vinetas']:.0%}. Usa columns, block, equation o table")
-    return errs
+        return [f"{n_bul} de {len(content)} diapositivas son solo viñetas; máximo "
+                f"{lim['max_fraccion_vinetas']:.0%}. Usa columns, block, equation o table"]
+    return []
 
 
 def outline(state: State) -> dict:
@@ -740,17 +750,21 @@ def outline(state: State) -> dict:
     base = load_base(state)
     guide, lim = load_style(state.get("style_path"))
     feedback = ""
-    for _ in range(MAX_OUTLINE_ATTEMPTS):
+    for attempt in range(1, MAX_OUTLINE_ATTEMPTS + 1):
         o = call_structured(MODEL_OUTLINE, Outline, OUTLINE_PROMPT.format(
             kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide=guide or "-", limits=describe_limits(lim)))
+        o = ajustar_kinds(o)
         errs = validate_outline(o, chunks, lim)
-        if not errs:
+        soft = variedad_outline(o, lim)
+        if not errs and (not soft or attempt == MAX_OUTLINE_ATTEMPTS):
+            for w in soft:
+                print(f"Aviso del guion: {w}")
             d = o.model_dump()
             head, tail = split_base(base, d)
             return {"outline": d, "head": head, "tail": tail}
-        feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs) + "\n"
+        feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs + soft) + "\n"
     raise RuntimeError(f"Outline inválido tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
 
 
