@@ -311,6 +311,8 @@ _NEWLINE_CMD = re.compile(r"\n(?=(?:abla|eq|eg|ot|oindent|ewline|u|i|leq|geq|mid
 
 def restaurar_escapes(obj):
     if isinstance(obj, str):
+        # a veces el modelo emite \u0000 + hex en vez del carácter (á → "\0e1")
+        obj = re.sub("\x00([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), obj)
         obj = _NEWLINE_CMD.sub(lambda _: "\\n", obj)
         return "".join(_CONTROL.get(c, c) for c in obj)
     if isinstance(obj, list):

@@ -59,6 +59,7 @@ def fake_text(model, prompt):
 assert bg.restaurar_escapes({"t": ["\texttt{x} \frac{a}{b} \beta \rho \neq 0"]}) == \
     {"t": [r"\texttt{x} \frac{a}{b} \beta \rho \neq 0"]}
 assert bg.restaurar_escapes("a\n  \\item b") == "a\n  \\item b"   # saltos reales intactos
+assert bg.restaurar_escapes("sistem\x00e1ticamente") == "sistemáticamente"
 
 bg.call_structured, bg.call_text = fake_structured, fake_text
 
