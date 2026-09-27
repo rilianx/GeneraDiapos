@@ -1,0 +1,265 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+
+% Macros disponibles para el modelo: se detectan automáticamente y se le
+% informan en cada diapositiva. Agrega aquí las que necesite cada paper.
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% lsmear: variable selection strategy for interval branch and bound, Ignacio Araya \and Bertrand Neveu y \emph{Journal of Global Optimization}, 2017 se rellenan desde el guion.
+% Si los reemplazas a mano, se respetan tal cual.
+\title{lsmear: variable selection strategy for interval branch and bound}
+\subtitle{\emph{Journal of Global Optimization}, 2017}
+\author{Ignacio Araya \and Bertrand Neveu}
+\date{}
+
+\begin{document}
+
+\begin{frame}[plain]
+\titlepage
+\end{frame}
+
+\begin{frame}{El branching decide el costo del B\&B}
+\small
+\begin{block}{Contexto}
+La optimización global continua se resuelve deterministamente con \textit{interval branch and bound}.
+\end{block}
+
+\begin{itemize}
+  \item Cada nodo se bisecciona en dos subproblemas.
+  \item La variable elegida condiciona el tamaño del árbol.
+  \item Se busca una solución $\epsilon$-óptima sin explorar demasiados nodos.
+\end{itemize}
+
+\begin{alertblock}{Limitación}
+Las estrategias clásicas usan información local del nodo, pero ignoran qué restricciones importan más.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{Las heurísticas clásicas pesan todo por igual}
+\small
+\begin{columns}[T]
+\column{0.48\textwidth}
+\textbf{Reglas de referencia}
+\begin{itemize}
+  \item \texttt{round-robin}: rota variables sin usar información local.
+  \item \texttt{largest-first}: elige el mayor dominio.
+  \item \texttt{smear}: estima impacto con derivadas intervalares.
+\end{itemize}
+
+\column{0.48\textwidth}
+\textbf{Dónde fallan}
+\begin{block}{Idea}
+Si una restricción está activa, su efecto guía el branching; si está inactiva, aporta poco.
+\end{block}
+
+\[
+\operatorname{smear}(x_i,g_j)=\operatorname{wid}(x_i)\,|a_{ji}|
+\]
+Mide ancho por sensibilidad local.
+
+\[
+\operatorname{smearsum}(x_i)=\sum_{j=1}^m \operatorname{smear}(x_i,g_j)
+\]
+Suma el efecto de todas las restricciones por igual.
+\end{columns}
+
+\begin{alertblock}{Mensaje clave}
+El agregado puede ser engañoso: restricciones inactivas pueden dominar la elección.
+\end{alertblock}
+\end{frame}
+
+% TODO: la diapositiva 3 no compiló tras 3 intentos
+\begin{frame}{\texttt{round-robin}, \texttt{largest-first} y smear}
+\alert{Diapositiva pendiente de revisión}
+\end{frame}
+
+\begin{frame}{La idea: usar multiplicadores de Lagrange óptimos}
+\small
+\begin{block}{Definición}
+Se linealiza el problema alrededor del centro de la caja actual y se resuelve esa aproximación.
+\end{block}
+
+\begin{exampleblock}{Idea}
+Los multiplicadores duales óptimos reponderan cada restricción antes de calcular el smear.
+\end{exampleblock}
+
+\begin{block}{Selección}
+Se evalúa un Lagrangiano ponderado y se biseca la variable con mayor impacto.
+\end{block}
+
+\begin{alertblock}{Mensaje clave}
+\alert{No todas las restricciones pesan igual}: la estrategia aprende su relevancia de la linealización.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{El Lagrangiano explica qué restricciones importan}
+\begin{block}{Definición}
+\[
+L(x,\lambda)=f(x)+\sum_{j=1}^{m}\lambda_j\,g_j(x), \qquad \lambda_j\ge 0
+\]
+\end{block}
+
+\small
+\begin{itemize}
+  \item $f(x)$ es la función objetivo; la suma penaliza violaciones de restricción.
+  \item Cada $\lambda_j$ pondera la restricción $g_j(x)\le 0$ asociada.
+  \item $\lambda^\star$ son los \textbf{multiplicadores duales óptimos} del problema.
+  \item \alert{$\lambda_j^\star$ mide la sensibilidad óptima frente a la restricción $j$.}
+  \item Si una restricción es inactiva, su multiplicador óptimo es $0$.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} combina linealización y smear}
+\small
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.58\textwidth}
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja $\mathbf{x}$, Jacobiano intervalar $J$, restricciones $g$}
+\KwOut{variable a bisecar}
+linealizar $g$ en $\operatorname{mid}(\mathbf{x})$\;
+resolver el LP con cotas de $\mathbf{x}$ y objetivo no acotado\;
+\If{el LP es infactible o no acotado}{
+\Return \texttt{smearsum}$(\mathbf{x},J)$\;
+}
+\For{$i=1,\dots,n$}{
+  $D \gets \lambda_i^\star$\;
+  \For{$j=1,\dots,m$}{
+    $D \gets D + \lambda_{n+j}^\star \, J_{ji}$\;
+  }
+  medir $|\;D\cdot \operatorname{wid}(x_i)\;|$\;
+}
+\Return $\argmax_i |\;D\cdot \operatorname{wid}(x_i)\;|$\;
+\end{algorithm}
+\end{column}
+\begin{column}{0.42\textwidth}
+\begin{block}{Idea central}
+La \alert{ponderación por multiplicadores duales óptimos} aproxima la importancia real de cada restricción.
+\end{block}
+\begin{exampleblock}{Implementación}
+\texttt{IbexOpt} integra \texttt{lsmear}; el LP se resuelve con \texttt{SoPlex}.
+\end{exampleblock}
+\begin{alertblock}{Fallback}
+Si falla la fase lineal, la estrategia usa \texttt{smearsum} con el mismo $J$.
+\end{alertblock}
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{El experimento usa 76 instancias COCONUT}
+\small
+
+\begin{block}{Configuración experimental}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Benchmark & COCONUT, series 1 y 2; 76 instancias seleccionadas \\
+Ejecuciones & Cinco por estrategia e instancia \\
+Reporte & Se eliminan la mejor y la peor corrida; se promedian las tres centrales \\
+Parámetros & Límite de tiempo 7200 s; precisión \(\epsilon=10^{-6}\) \\
+Plataforma & \texttt{PowerEdge T420}, dos \texttt{Intel Xeon} quad-core a 2.20 GHz y 8 GB RAM \\
+\bottomrule
+\end{tabular}
+\end{block}
+
+\begin{alertblock}{Criterio de tiempo}
+Timeout significa que la estrategia no resolvió la instancia dentro de 7200 s.
+\end{alertblock}
+
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} domina a las estrategias clásicas}
+\small
+\begin{center}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Métrica & \texttt{lsmear} & \texttt{rr} & \texttt{lf} & \texttt{ssum} & \texttt{smax} \\
+\midrule
+Tiempo total & \alert{1071} & 1400 & 16 & 3035 & 2410 \\
+\#box total & 50555 & 661 & 12\,626 & 1949 & 2552 \\
+Ganancia media vs. clásico & \alert{1.30--2.48} & 2.04 & 2.48 & 1.30 & 1.34 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \texttt{lsmear} obtiene el mejor tiempo total entre las estrategias comparadas.
+  \item El \textbf{sobrecoste} del LP es pequeño frente al filtrado del solver.
+  \item \texttt{ssum} es el mejor clásico, pero queda detrás en tiempo agregado.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} es la variante más simple y eficaz}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Variante & Time total & Mejor time & Peor time & Mejor \#box & Peor \#box \\
+\midrule
+\texttt{lsmear} & 21035 & 0.6 & 2753 & 50 & 1877486 \\
+\texttt{lsmear-MG} & \alert{19181} & \alert{0.6} & \alert{1514} & \alert{46} & \alert{548282} \\
+\texttt{lsmear-LR} & 20429 & 1.0 & 3865 & 11 & 203997 \\
+\texttt{lsmear-LI} & 20429 & 1.0 & 3865 & 11 & 203997 \\
+\texttt{lsmear-LRI} & 20429 & 1.0 & 3865 & 11 & 203997 \\
+\bottomrule
+\end{tabular}
+
+\begin{itemize}
+  \item \texttt{lsmear-MG} logra el mejor tiempo total y el menor peor caso de \#box.
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} muestran el peor desempeño.
+  \item \texttt{lsmear-MG} no requiere modificar el contractor del solver.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{FeasibleDiving} mejora el tiempo total}
+\small
+\begin{center}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Instancia & \multicolumn{2}{c}{\texttt{minLB}} & \multicolumn{2}{c}{\texttt{FeasibleDiving}} & $g$ \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+ & \texttt{ssum} & \texttt{lsmear-MG} & \texttt{ssum} & \texttt{lsmear-MG} & \\
+\midrule
+ex7\_2\_9   & 20   & 34  & 14   & 16  & 0.85 \\
+ex14\_1\_7  & 924  & 296 & 221  & \alert{254} & 0.74 \\
+chem        & 7167 & 397 & 7173 & \alert{381} & 17.1 \\
+himmel16    & 110  & 31  & \alert{26} & 41  & 0.65 \\
+\midrule
+total time  & 59,274 & 29,136 & 43,867 & \alert{19,181} & 2.29 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \texttt{FeasibleDiving} reduce el tiempo total frente a \texttt{minLB}.
+  \item \texttt{lsmear-MG} obtiene el mejor total con \texttt{FeasibleDiving}.
+  \item La ganancia media frente a \texttt{ssum} sube de 2.03 a 2.29.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{La conclusión es un branching más informado}
+\begin{block}{Idea principal}
+\texttt{lsmear} pondera restricciones con multiplicadores duales óptimos y define un smear lagrangiano.
+\end{block}
+
+\begin{exampleblock}{Mejor variante}
+\texttt{lsmear-MG} ofrece el mejor compromiso entre rendimiento y simplicidad.
+\end{exampleblock}
+
+\begin{block}{Ventaja estructural}
+Es independiente del contractor convexo usado por el solver.
+\end{block}
+
+\begin{alertblock}{Trabajo futuro}
+Incorporar errores de violación y tratar mejor variables lineales.
+\end{alertblock}
+\end{frame}
+
+\end{document}

@@ -1,0 +1,165 @@
+{
+  "title": "lsmear: variable selection strategy for interval branch and bound",
+  "authors": "Ignacio Araya \\and Bertrand Neveu",
+  "venue": "\\emph{Journal of Global Optimization}, 2017",
+  "notation": "\\small\\begin{itemize}\n  \\item $x\\in\\R^n$: vector de variables; $\\mathbf{x}=[x_1,\\dots,x_n]$: box actual.\n  \\item $f(x)$: función objetivo; $g(x)\\le 0$: restricciones; $x^\\star$: solución óptima.\n  \\item $\\operatorname{wid}(x_i)$: ancho del intervalo $x_i$; $\\operatorname{mid}(x_i)$: punto medio.\n  \\item $J_{ji}$: sobreestimación intervalar de $\\partial g_j/\\partial x_i$; $\\lambda^\\star$: multiplicadores duales óptimos.\n  \\item $L(x,\\lambda)$: Lagrangiano; $\\texttt{lsmear}$: estrategia propuesta.\n\\end{itemize}",
+  "slides": [
+    {
+      "title": "lsmear mejora el branching por intervalos",
+      "bullets": [],
+      "kind": "title",
+      "sources": []
+    },
+    {
+      "title": "El branching decide el costo del B\\&B",
+      "bullets": [
+        "Optimización global continua con soluciones deterministas mediante interval branch and bound.",
+        "Cada nodo se divide bisecando una variable; la elección condiciona el tamaño del árbol.",
+        "El objetivo es acercarse rápidamente a una solución \\(\\epsilon\\)-óptima sin explorar demasiados nodos.",
+        "Las estrategias clásicas usan información local del nodo, pero ignoran qué restricciones importan más."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec3",
+        "sec4",
+        "sec5"
+      ]
+    },
+    {
+      "title": "Las heurísticas clásicas pesan todo por igual",
+      "bullets": [
+        "Comparar reglas de branching usadas como referencia.",
+        "Mostrar por qué su criterio puede fallar en problemas con restricciones activas e inactivas."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec3"
+      ]
+    },
+    {
+      "title": "\\texttt{round-robin}, \\texttt{largest-first} y smear",
+      "bullets": [
+        "\\texttt{round-robin}: rota variables y evita sesgo por orden inicial.",
+        "\\texttt{largest-first}: elige el intervalo más ancho.",
+        "Smear-based: usa derivadas intervalares y anchos para estimar impacto.",
+        "Limitación común: todas las restricciones cuentan con la misma importancia."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec3",
+        "sec4"
+      ]
+    },
+    {
+      "title": "La idea: usar multiplicadores de Lagrange óptimos",
+      "bullets": [
+        "Linearizar el problema alrededor del centro de la caja actual.",
+        "Resolver una aproximación lineal para obtener multiplicadores duales óptimos.",
+        "Reponderar las restricciones con esos pesos antes de medir el smear.",
+        "Seleccionar la variable con mayor impacto sobre un Lagrangiano ponderado."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec2",
+        "sec6",
+        "sec7"
+      ]
+    },
+    {
+      "title": "El Lagrangiano explica qué restricciones importan",
+      "bullets": [
+        "Definir el Lagrangiano del problema primal con multiplicadores no negativos.",
+        "Interpretar \\(\\lambda_j^\\star\\) como sensibilidad óptima de la restricción \\(j\\)."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec6"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear} combina linealización y smear",
+      "bullets": [
+        "Fase 1: construir la linealización Taylor y resolver el programa lineal.",
+        "Fase 2: calcular el impacto de cada variable con el Lagrangiano ponderado.",
+        "Fallback: si el LP es infactible o no acotado, usar \\texttt{smearsum}.",
+        "Implementación central en \\texttt{IbexOpt} con \\texttt{SoPlex} para el LP."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "alg2",
+        "alg3",
+        "sec7",
+        "sec9"
+      ]
+    },
+    {
+      "title": "El experimento usa 76 instancias COCONUT",
+      "bullets": [
+        "Evaluar en el benchmark COCONUT serie 1 y 2.",
+        "Ejecutar cada estrategia cinco veces y promediar las tres corridas centrales.",
+        "Tiempo límite de 7200 s y precisión \\(\\epsilon=10^{-6}\\).",
+        "Plataforma: servidor con dos Intel Xeon quad-core a 2.20 GHz y 8 GB RAM."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec9"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear} domina a las estrategias clásicas",
+      "bullets": [
+        "Comparar tiempo total y tamaño del árbol contra \\texttt{rr}, \\texttt{lf}, \\texttt{ssum}, \\texttt{smax} y \\texttt{ssr}.",
+        "Resaltar que \\texttt{lsmear} logra el mejor tiempo total de la tabla.",
+        "Mostrar que el sobrecoste de resolver el LP es pequeño frente al filtrado.",
+        "Usar la mejora relativa promedio para sintetizar la ventaja."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab1",
+        "sec10"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear-MG} es la mejor variante práctica",
+      "bullets": [
+        "Comparar \\texttt{lsmear}, \\texttt{lsmear-MG}, \\texttt{lsmear-LI}, \\texttt{lsmear-LR} y \\texttt{lsmear-LRI}.",
+        "\\texttt{lsmear-MG} obtiene el mejor tiempo total y el mejor balance global.",
+        "Las variantes con relajación lineal del impacto son las peores.",
+        "La implementación más simple y competitiva evita modificar el contractor."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab3",
+        "sec8",
+        "sec11"
+      ]
+    },
+    {
+      "title": "FeasibleDiving potencia el beneficio del método",
+      "bullets": [
+        "Comparar \\texttt{minLB} frente a \\texttt{FeasibleDiving} con \\texttt{ssum}, \\texttt{ssr} y \\texttt{lsmear-MG}.",
+        "\\texttt{FeasibleDiving} supera a \\texttt{minLB} para cualquier estrategia de branching.",
+        "\\texttt{lsmear-MG} sigue siendo mejor bajo ambas políticas de búsqueda.",
+        "La ganancia promedio frente a \\texttt{ssum} aumenta con \\texttt{minLB}."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab4",
+        "sec12"
+      ]
+    },
+    {
+      "title": "La conclusión es un branching más informado",
+      "bullets": [
+        "\\texttt{lsmear} mejora las estrategias smear clásicas al ponderar restricciones con información dual.",
+        "\\texttt{lsmear-MG} ofrece el mejor compromiso entre rendimiento y simplicidad.",
+        "El método es independiente del contractor convexo usado por el solver.",
+        "Trabajo futuro: incorporar errores de violación y tratar mejor variables lineales."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec13"
+      ]
+    }
+  ]
+}
