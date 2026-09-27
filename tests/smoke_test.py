@@ -88,6 +88,8 @@ assert bg.kind_check(r"\begin{frame}{T}$x$\end{frame}", "block", ["eq1"]) == [
     "Formato (block): usa al menos un block, alertblock o exampleblock",
     "Formato (block): incluye al menos una ecuación en display (\\[ \\] o align)"]
 
+assert bg.SlideSpec(title="T", bullets=[], kind="alertblock").kind == "block"
+
 # Consumo de tokens: se acumula por modelo y aparece en el informe
 class _Msg:
     usage_metadata = {"input_tokens": 1200, "output_tokens": 300}

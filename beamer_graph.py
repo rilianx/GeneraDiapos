@@ -32,7 +32,7 @@ import tomllib
 from pathlib import Path
 from typing import Annotated, Literal, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
@@ -150,6 +150,10 @@ calcular pesos $w$\;
 \end{frame}""", (r"\\begin\{algorithm\}", "incluye el pseudocódigo en un entorno algorithm (algorithm2e)")),
 }
 
+KIND_ALIASES = {"alertblock": "block", "exampleblock": "block", "blocks": "block",
+                "two_columns": "columns", "column": "columns", "itemize": "bullets",
+                "list": "bullets", "tabular": "table", "math": "equation", "pseudocode": "algorithm"}
+
 # Si la diapo cita un fragmento de este tipo, debe mostrarlo
 SOURCE_KINDS = {"tab": ("table", "columns"), "alg": ("algorithm",),
                 "eq": ("equation", "columns", "block", "algorithm")}
@@ -161,9 +165,16 @@ SOURCE_CONTRACT = {"tab": KINDS["table"][2], "alg": KINDS["algorithm"][2], "eq":
 class SlideSpec(BaseModel):
     title: str
     bullets: list[str]
-    kind: Literal["title", "bullets", "columns", "block", "equation", "algorithm", "table"]
+    kind: str = Field(description="title, bullets, columns, block, equation, algorithm o table")
     sources: list[str] = Field(default_factory=list,
                                description="IDs de fragmentos que usa la diapo")
+
+    @field_validator("kind")
+    @classmethod
+    def _alias(cls, v: str) -> str:
+        # el modelo a veces usa el nombre del entorno LaTeX en vez del tipo
+        v = v.strip().lower()
+        return KIND_ALIASES.get(v, v)
 
 
 class Outline(BaseModel):
@@ -699,6 +710,10 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
     errs = []
     lim = lim or STYLE_DEFAULTS
     for i, s in enumerate(o.slides):
+        if s.kind != "title" and s.kind not in KINDS:
+            errs.append(f"Diapositiva {i} ('{s.title}') tiene kind='{s.kind}' inválido; "
+                        f"usa uno de: {', '.join(KINDS)}")
+            continue
         if len(s.bullets) > lim["max_items"]:
             errs.append(f"Diapositiva {i} ('{s.title}') tiene {len(s.bullets)} puntos; "
                         f"máximo {lim['max_items']}: divídela")
