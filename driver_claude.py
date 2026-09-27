@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -31,6 +32,16 @@ import beamer_graph as bg
 PENDIENTES = "pendientes.json"
 COMUN = "comun.md"
 MIN_COMUN = 150          # un párrafo más corto no vale la pena compartirlo
+
+
+def revisor() -> str:
+    """LLM_REVISOR: "self" (defecto) revisa Claude mismo, casi sin costo porque el paper ya está
+    en su contexto; "subagente" delega todas las revisiones de la ronda en un subagente
+    independiente (≈80k tokens por ronda en lsmear, pero no comparte los sesgos del autor)."""
+    r = (os.environ.get("LLM_REVISOR") or "self").strip().lower()
+    if r not in ("self", "subagente"):
+        raise SystemExit(f"LLM_REVISOR debe ser 'self' o 'subagente', no {r!r}")
+    return r
 
 
 def compactar(cuerpos: list[str]) -> tuple[list[str], dict[str, str]]:
@@ -67,12 +78,12 @@ def revision_independiente() -> str:
     """Quien escribió la diapo no debería verificarla: se delega en un subagente sin contexto.
     El texto no lleva rutas (están en la cabecera de cada tarea): así va una vez a comun.md."""
     return ("PARA QUIEN COORDINA (un subagente revisor ignora este párrafo): no hagas tú esta "
-            "revisión, que escribiste la diapositiva. Lanza un subagente (herramienta Agent; puede "
-            "revisar varias tareas, y varios pueden ir en paralelo) y pásale las rutas de las tareas "
-            "con este encargo: «Lee cada tarea y los bloques que cita del archivo de bloques comunes. "
-            "Mira en el paper solo las páginas que indica CONTEXTO (Read con pages) y verifica cada "
-            "afirmación contra esas páginas, no contra lo que recuerdes. Escribe el JSON en el archivo "
-            "de Respuesta de la cabecera». Sin subagentes, hazla tú releyendo esas páginas.")
+            "revisión, que escribiste la diapositiva. Lanza UN solo subagente (herramienta Agent) "
+            "para todas las revisiones de la ronda y pásale las rutas de las tareas con este encargo: "
+            "«Lee cada tarea y los bloques que cita del archivo de bloques comunes. Lee una vez las "
+            "páginas del paper que indican los CONTEXTOS (Read con pages) y verifica cada afirmación "
+            "contra esas páginas, no contra lo que recuerdes. Escribe cada JSON en el archivo de "
+            "Respuesta de su cabecera». Sin subagentes, hazla tú releyendo esas páginas.")
 
 
 def etiqueta(p: dict) -> str:
@@ -130,7 +141,7 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
                 cuerpo += "\n\n---\nResponde SOLO con el contenido pedido (sin explicación ni ```)."
         resp = d / "respuestas" / f"{it.id}.{ext}"
         name = f"{n:02d}_{re.sub(r'[^a-z-]', '', tag.split(' ')[0])}_{it.id[:8]}.md"
-        if tag == "revisar-afirmaciones":
+        if tag == "revisar-afirmaciones" and revisor() == "subagente":
             cuerpo = revision_independiente() + "\n\n" + cuerpo
         archivos.append((tareas / name, f"# {tag}\n\nRespuesta: `{resp}`\nPaper: `{meta['paper']}`",
                          cuerpo))

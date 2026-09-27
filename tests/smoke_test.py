@@ -219,8 +219,8 @@ while (code := driver_claude.run(cli)) == 3:
         tarea = Path(t["tarea"]).read_text()
         comunes += tarea.count("[bloque común")
         prompt = driver_claude.expandir(tarea, work / driver_claude.COMUN)
-        if t["esquema"] == "Review":                  # revisión independiente, con un subagente
-            assert "PARA QUIEN COORDINA" in prompt and "subagente" in prompt
+        if t["esquema"] == "Review":                  # por defecto se revisa Claude mismo
+            assert "PARA QUIEN COORDINA" not in prompt and "como si la hubiera escrito otra persona" in prompt
         prompt = prompt.split("---\n\n", 1)[1].split("\n\n---\n")[0]
         if t["tipo"] == "guion":
             ans = (work / "guion.json").read_text()
@@ -233,6 +233,17 @@ assert code == 0 and (tmp / "out_claude" / "presentacion.pdf").exists()
 assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revisión, diapos...
 assert calls["lectura"] == 1
 assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
+# LLM_REVISOR=subagente: la revisión pide un solo subagente independiente para la ronda
+import os
+os.environ["LLM_REVISOR"] = "subagente"
+assert "UN solo subagente" in driver_claude.revision_independiente() and driver_claude.revisor() == "subagente"
+os.environ["LLM_REVISOR"] = "otro"
+try:
+    driver_claude.revisor()
+    raise AssertionError("LLM_REVISOR inválido debía fallar")
+except SystemExit:
+    pass
+del os.environ["LLM_REVISOR"]
 # compactar: lo repetido va una vez al archivo común y expandir lo devuelve intacto
 largo = "Reglas:\n" + "- regla fija\n" * 20
 cs, com = driver_claude.compactar([f"A\n\n{largo}\n\nTítulo: 1", f"B\n\n{largo}\n\nTítulo: 2", "C corta"])

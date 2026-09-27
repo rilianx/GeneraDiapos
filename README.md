@@ -263,8 +263,17 @@ que se repiten en dos o más tareas de una ronda (reglas, guía, plantillas por 
 completo, instrucciones del revisor, esquemas JSON) van una vez a `DIR/comun.md` y cada
 tarea los cita por id. En lsmear eso bajó la ronda de diapos de 86 a 31 KB y la de
 revisiones de 57 a 24 KB. Lo propio de cada diapo (contenido, aviso, fuentes, qué mide
-cada tabla) sigue en su tarea. La revisión de afirmaciones pide un subagente sin el
-contexto de quien escribió la diapo, que relee solo las páginas citadas.
+cada tabla) sigue en su tarea.
+
+La revisión de afirmaciones la hace Claude mismo por defecto (`LLM_REVISOR=self`): el
+paper ya está en su contexto, así que casi no cuesta, y el prompt le pide revisar como si
+la diapo fuera de otra persona y citar la celda o el pasaje de cada dato. Con
+`LLM_REVISOR=subagente` pide un solo subagente independiente para todas las revisiones de
+la ronda, que relee las páginas citadas. En una prueba ciega con 5 errores plantados en
+13 diapos de lsmear, ambos los encontraron todos sin falsos positivos; el subagente costó
+~80k tokens y el propio ~6k. La prueba favorece al revisor propio (conocía la versión
+original), así que para presentaciones importantes conviene el subagente: no comparte
+los sesgos de quien escribió.
 
 ## Configuración
 
@@ -272,7 +281,7 @@ contexto de quien escribió la diapo, que relee solo las páginas citadas.
 |---|---|---|
 | Proveedor y modelos | variables `LLM_PROVIDER`, `LLM_MODEL_OUTLINE`, `LLM_MODEL_SLIDES` | por defecto OpenAI; los nombres por defecto pueden quedar obsoletos, usa los de tu cuenta |
 | Razonamiento del guion | variable `LLM_REASONING_OUTLINE` | `low`, `medium` (por defecto) o `high`; solo OpenAI. `LLM_REASONING_SLIDES` hace lo mismo para las diapos (por defecto, sin razonamiento extra) |
-| Revisor de afirmaciones | variables `LLM_MODEL_REVIEW` (por defecto el de diapos) y `LLM_REASONING_REVIEW` (por defecto `medium`) | cada diapo que compila se verifica contra sus fragmentos; lo no respaldado se corrige una vez (presupuesto propio, `MAX_REVIEWS`) y, si persiste, queda en `informe.md` |
+| Revisor de afirmaciones | variables `LLM_MODEL_REVIEW` (por defecto el de diapos) y `LLM_REASONING_REVIEW` (por defecto `medium`) | cada diapo que compila se verifica contra sus fragmentos; lo no respaldado se corrige una vez (presupuesto propio, `MAX_REVIEWS`) y, si persiste, queda en `informe.md`. En modo Claude, `LLM_REVISOR`: `self` (por defecto) o `subagente` |
 | Preámbulo, tema, macros | `base.tex` | debe tener exactamente un `%%SLIDES%%` |
 | Título/autores | `<<TITLE>>`, `<<AUTHORS>>`, `<<VENUE>>` en `base.tex` | se rellenan desde el guion; si los escribes a mano se respetan |
 | Figuras | automático (PDF) | al leer el paper se recortan sus figuras en `<salida>/figuras/figN.png` (desde el pie «Fig. N»/«Figure N»); el guion las cita como `fig*` y el tipo `figure` las inserta con `\includegraphics` |
