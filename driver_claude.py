@@ -60,13 +60,21 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
         p = it.value
         tag = etiqueta(p)
         if "outline" in p:                                   # revisión humana del guion
-            ext = "json"
+            ext = "md"
+            chunks = values.get("chunks", {})
             (d / "guion.json").write_text(json.dumps(p["outline"], ensure_ascii=False, indent=2))
-            (d / "guion.md").write_text(bg.guion_md(p["outline"], values.get("chunks", {}), meta["paper"]))
-            cuerpo = (f"Revisión humana del guion. Muestra `{d}/guion.md` al usuario (empieza por "
-                      f"«⚠ Revisar primero») y ESPERA su respuesta: no asumas la aprobación. Cuando "
-                      f"lo apruebe, con o sin cambios, escribe el guion "
-                      f"final (mismo formato que `{d}/guion.json`) en el archivo de respuesta.")
+            (d / "guion.md").write_text(bg.guion_md(p["outline"], chunks, meta["paper"]))
+            (d / "guion_doc.md").write_text(bg.guion_doc_md(p["outline"], chunks))
+            cuerpo = (
+                "Revisión humana del guion, en un documento editable.\n\n"
+                f"1. Si tienes el conector de documentos de Claude (Claude Docs), crea un documento con el "
+                f"contenido EXACTO de `{d}/guion_doc.md` (sin reescribirlo) y da el link al usuario: puede "
+                "editar textos, viñetas, tipos, fuentes y borrar o mover diapositivas directamente. Sin "
+                f"conector, muéstrale `{d}/guion_doc.md` y aplica tú los cambios que pida sobre ese archivo.\n"
+                "2. ESPERA su respuesta: no asumas la aprobación.\n"
+                "3. Cuando apruebe, exporta el documento a markdown (export, format markdown) y guarda el "
+                "texto decodificado, tal cual, en el archivo de respuesta. Sin conector, copia ahí "
+                f"`{d}/guion_doc.md` con los cambios. El pipeline lo lee con código y lo valida.")
         else:
             ext = "tex" if p["formato"] == "texto" else "json"
             cuerpo = p["prompt"]
@@ -100,7 +108,10 @@ def leer_respuestas(pend: list[dict], values: dict) -> tuple[dict, list[str], li
             ans[t["id"]] = raw
             continue
         try:
-            data = json.loads(bg.strip_fences(raw).removeprefix("json").strip())
+            if f.suffix == ".md":                        # guion editado como documento
+                data = bg.guion_desde_md(raw)
+            else:
+                data = json.loads(bg.strip_fences(raw).removeprefix("json").strip())
             if t["tipo"] == "guion":
                 lim = bg.load_style(values.get("style_path"))[1]
                 o = bg.asegurar_portada(bg.ajustar_kinds(bg.Outline.model_validate(data),

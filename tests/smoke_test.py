@@ -236,6 +236,56 @@ _, _, errs = driver_claude.leer_respuestas([{"id": "x", "tarea": "t", "respuesta
 assert errs and bad[1] == ["t"]
 bg.PROVIDER = "openai"
 
+# Guion como documento editable: ida y vuelta a través de un editor de markdown simulado
+# (según lo observado en Claude Docs: une líneas contiguas, interpreta escapes, y al exportar
+# escapa \ _ * fuera del código en línea)
+def editor(md):
+    out = []
+    for par in md.split("\n\n"):
+        lines = par.strip("\n").split("\n")
+        if not all(l.startswith("- ") for l in lines) and not lines[0].startswith("#"):
+            lines = [" ".join(lines)]
+        out.append("\n".join(lines))
+    return "\n\n".join(out)
+def interpretar(md):
+    return re.sub(r"(`[^`]*`)|\\([\\_*&#\[\]()~>|!+.\-{}])", lambda m: m.group(1) or m.group(2), md)
+def exportar(txt):
+    return re.sub(r"(`[^`]*`)|([\\_*])", lambda m: m.group(1) or "\\" + m.group(2), txt)
+import re
+dificil = {"title": r"\texttt{lsmear}: B\&B por intervalos", "authors": r"A \and B", "venue": "Rev", "notation": r"$x_i$: variable",
+           "slides": [{"title": r"Cuatro variantes de $\lambda^\star$", "bullets": [r"D suma lambda*_{n+j} J_ji", r"\texttt{rr} y B\&B"],
+                       "kind": "table", "sources": ["sec1"], "section": "Propuesta", "aviso": "¿tab1 o tab2?"}]}
+for o_ in (dificil, {**res["outline"], "slides": [x for x in res["outline"]["slides"] if x["kind"] not in bg.FIXED_KINDS]}):
+    back = bg.guion_desde_md(exportar(interpretar(editor(bg.guion_doc_md(o_, res["chunks"])))))
+    for k in ("title", "authors", "venue", "notation"):
+        assert back[k] == o_[k], (k, back[k], o_[k])
+    for a, b in zip(o_["slides"], back["slides"]):
+        for k in ("title", "bullets", "kind", "sources", "section", "aviso"):
+            assert a.get(k, "") == b[k], (k, a.get(k), b[k])
+    assert len(back["slides"]) == len(o_["slides"])
+
+# Figuras: se recortan del PDF (el pie «Fig. N» sí, la mención «Figure N shows» no) y una
+# diapo figure compila con \includegraphics{figuras/figN.png}
+import pymupdf
+pdf = tmp / "con_figura.pdf"
+with pymupdf.open() as doc:
+    page = doc.new_page(width=440, height=666)
+    page.insert_text((50, 90), "Figure 1 shows the results of the new method on all instances.", fontsize=9)
+    page.draw_rect(pymupdf.Rect(80, 120, 360, 320), color=(0, 0, 1), fill=(0.8, 0.8, 1))
+    page.insert_text((80, 340), "Fig. 1 Resultado del metodo nuevo", fontsize=9)
+    doc.save(pdf)
+figs = bg.extraer_figuras(pdf, tmp / "figuras")
+assert list(figs) == [1] and (tmp / "figuras" / "fig1.png").exists(), figs
+assert figs[1]["caption"].startswith("Fig. 1 Resultado") and figs[1]["archivo"] == "figuras/fig1.png"
+fig_frame = bg.KINDS["figure"][1].replace("fig2", "fig1")
+assert not bg.lint_frame(fig_frame) and not bg.kind_check(fig_frame, "figure", ["fig1"])
+assert bg.kind_check(r"\begin{frame}{T}x\end{frame}", "figure", ["fig1"])        # cita fig1 sin mostrarla
+assert bg.lint_frame(r"\begin{frame}{T}\includegraphics{/etc/passwd}\end{frame}")  # solo figuras/figN.png
+head = bg.split_base(bg.DEFAULT_BASE.read_text(), None)[0]
+tex, off = bg.standalone(head, fig_frame)
+errs, _ = bg.compile_tex(tex, offset=off, figuras=str(tmp / "figuras"))
+assert not errs, errs
+
 # Consumo de tokens: se acumula por modelo y aparece en el informe
 class _Msg:
     usage_metadata = {"input_tokens": 1200, "output_tokens": 300}

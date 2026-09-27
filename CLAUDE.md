@@ -25,12 +25,13 @@ para el flujo completo y las decisiones de diseño.
 
 - Configuración y esquemas (`SlideSpec`, `Outline`, `State`, `SlideState`)
 - LLM: `_chat`, `call_text`, `call_structured`
-- Extracción: `extract_text`, `chunk_document`
+- Extracción: `extract_text`, `chunk_document`, `extraer_figuras` (PNG por figura, fragmentos `fig*`)
 - LaTeX: `preflight`, `compile_tex`, `parse_log`, `lint_frame`, `soft_checks`
 - Estilo: `load_style`, `describe_limits`, `style_check`
 - Prompts: `OUTLINE_PROMPT`, `SLIDE_PROMPT`, `REFINE_SLIDE_PROMPT`, `REFINE_GLOBAL_PROMPT`
 - Base: `base_packages`, `base_files`, `base_macros`, `fill_base`, `split_base`, `standalone`
-- Guion: `indice_tablas`, `cargar_guion` (guion revisado desde JSON), `guion_md` (vista para el PR)
+- Guion: `indice_tablas`, `cargar_guion` (guion revisado desde JSON), `guion_md` (vista para el PR),
+  `guion_doc_md` / `guion_desde_md` (guion como documento editable, ida y vuelta en código)
 - Nodos principales: `ingest`, `outline`, `review_outline`, `fan_out`, `assemble`,
   `compile_full`, `refine_global`, `write_outputs`
 - Subgrafo: `write_slide`, `compile_slide`, `route_slide`, `review_slide`, `route_review`,

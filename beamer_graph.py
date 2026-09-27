@@ -150,6 +150,14 @@ Nuevo     & \alert{64} & \alert{2900} \\
   \item Reduce el tiempo casi a la mitad.
 \end{itemize}
 \end{frame}""", (r"\\begin\{tabular", "incluye la tabla con un entorno tabular (booktabs)")),
+    "figure": (
+        "una figura del paper (fig*), ya recortada como imagen, a buen tamaño y con 1-2 líneas de lectura",
+        r"""\begin{frame}{El método nuevo domina en casi todas las instancias}
+\begin{center}
+\includegraphics[width=0.85\textwidth,height=0.62\textheight,keepaspectratio]{figuras/fig2.png}
+\end{center}
+\small Cada punto es una instancia: bajo la diagonal, el método nuevo es más rápido.
+\end{frame}""", (r"\\includegraphics", "incluye la figura con \\includegraphics{figuras/figN.png}")),
     "algorithm": (
         "pseudocódigo con algorithm2e, simplificado a los pasos esenciales",
         r"""\begin{frame}{El algoritmo tiene dos fases}
@@ -175,7 +183,7 @@ AGENDA_FRAME = "\\begin{frame}{Contenido}\n\\tableofcontents\n\\end{frame}"
 
 # Una diapo de solo viñetas que cita una tabla o ecuación pasa a mostrarla.
 # (Un alg* puede citarse como contexto sin mostrar el pseudocódigo.)
-BULLETS_UPGRADE = {"tab": "table", "eq": "equation"}
+BULLETS_UPGRADE = {"tab": "table", "eq": "equation", "fig": "figure"}
 
 # ----------------------------------------------------------------------------
 # Esquemas
@@ -262,6 +270,7 @@ class State(TypedDict, total=False):
     human_review: bool
     chunks: dict[str, str]
     texto: str              # capa de texto completa del paper (chequeo de cifras en modo claude)
+    figuras_dir: str        # PNG de las figuras recortadas del PDF (figN.png)
     outline: dict
     head: str               # base hasta el marcador (incluye \\begin{document})
     tail: str               # base desde el marcador
@@ -284,6 +293,7 @@ class SlideState(TypedDict, total=False):
     limits: dict
     damaged: list[str]      # tablas citadas que la extracción dejó dañadas
     context_cifras: str     # modo claude: capa de texto completa para el chequeo de cifras
+    figuras_dir: str
     tables: str             # índice de todas las tablas (título y encabezados)
     style_errors: list[str]
     fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
@@ -450,6 +460,51 @@ def chunk_document(text: str, fmt: str) -> dict[str, str]:
         chunks[f"sec{n}"] = f"{title.strip()}\n{content}"
     return chunks
 
+_FIG_CAPTION = re.compile(r"^(?:Fig\.?|Figure)\s*(\d+)\s*[.:|]?\s+[A-Z(]")
+
+
+def extraer_figuras(pdf: Path, dest: Path, dpi: int = 200) -> dict[int, dict]:
+    """Recorta cada figura del PDF como PNG (dest/figN.png). Determinista: busca los pies
+    («Fig. N» / «Figure N» + mayúscula; las menciones en el texto no calzan) y toma la zona
+    de imágenes y dibujos sobre cada pie, con sus etiquetas, sin cabecera ni pie de página."""
+    import pymupdf
+    dest.mkdir(parents=True, exist_ok=True)
+    out: dict[int, dict] = {}
+    with pymupdf.open(pdf) as doc:
+        for pno, page in enumerate(doc, 1):
+            head, foot = page.rect.height * 0.08, page.rect.height * 0.94
+            txt = [(pymupdf.Rect(b["bbox"]), " ".join(sp["text"] for ln in b["lines"] for sp in ln["spans"]).strip())
+                   for b in page.get_text("dict")["blocks"] if b["type"] == 0]
+            txt = [(r, t) for r, t in txt if r.y0 >= head and r.y1 <= foot]
+            graf = [pymupdf.Rect(d["rect"]) for d in page.get_drawings()]
+            graf += [pymupdf.Rect(r) for img in page.get_images(full=True) for r in page.get_image_rects(img[0])]
+            graf = [g for g in graf if g.width > 20 and g.height > 20 and g.y0 >= head and g.y1 <= foot]
+            ancho = 0.6 * page.rect.width
+            prev = head
+            for r, t, n in sorted(((r, t, int(m.group(1))) for r, t in txt if (m := _FIG_CAPTION.match(t))),
+                                  key=lambda c: c[0].y0):
+                # la figura empieza bajo el último párrafo de texto corrido (o el pie anterior)
+                parrafos = [tr.y1 for tr, _ in txt if prev < tr.y1 <= r.y0 and tr.width > ancho
+                            and not any(g.intersects(tr) for g in graf)]
+                top = max(parrafos + [prev])
+                sel = [g for g in graf if g.y0 >= top - 2 and g.y1 <= r.y0 + 3]
+                prev = r.y1
+                if not sel or n in out:
+                    continue
+                box = pymupdf.Rect(sel[0])
+                for g in sel[1:]:
+                    box |= g
+                cerca = box + (-25, -25, 25, 25)            # etiquetas de ejes, (a), (b)...
+                for tr, _ in txt:
+                    if tr.y0 >= top - 2 and tr.y1 <= r.y0 and tr.width < ancho and cerca.intersects(tr):
+                        box |= tr
+                box = (box + (-3, -3, 3, 3)) & page.rect
+                f = dest / f"fig{n}.png"
+                page.get_pixmap(clip=box, dpi=dpi).save(f)
+                out[n] = {"pagina": pno, "caption": re.sub(r"\s+", " ", t), "archivo": f"figuras/{f.name}"}
+    return out
+
+
 TABLA_DANADA = ("[TABLA DAÑADA EN LA EXTRACCIÓN: celdas mezcladas o sin encabezados. "
                 "No la reproduzcas como tabla; toma las cifras del texto de la sección.]")
 _CAPTION = re.compile(r"\*\*Table\s+(\d+)\*\*[.:]?\s*([^\n]*)")
@@ -514,9 +569,11 @@ def preflight(base: str) -> None:
 
 
 def compile_tex(tex: str, passes: int = 1, offset: int = 0,
-                ignore_vbox: bool = False) -> tuple[list[str], Path]:
+                ignore_vbox: bool = False, figuras: str | None = None) -> tuple[list[str], Path]:
     d = Path(tempfile.mkdtemp(prefix="beamer_"))   # directorio propio: seguro en paralelo
     (d / "doc.tex").write_text(tex)
+    if figuras and Path(figuras).is_dir():
+        shutil.copytree(figuras, d / "figuras")
     cmd = ["pdflatex", "-interaction=nonstopmode", "-halt-on-error",
            "-no-shell-escape", "doc.tex"]
     for _ in range(passes):
@@ -578,6 +635,9 @@ def lint_frame(frame: str) -> list[str]:
     for pat in FORBIDDEN:
         if re.search(pat, frame):
             errs.append(f"Comando no permitido en un frame: {pat.replace(chr(92) * 2, chr(92))}")
+    for ruta in re.findall(r"\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}", frame):
+        if not re.fullmatch(r"figuras/fig\d+\.png", ruta.strip()):
+            errs.append(f"\\includegraphics solo admite figuras/figN.png del paper, no «{ruta}»")
     if re.search(r"\\verb|verbatim|lstlisting", frame) and "[fragile" not in frame:
         errs.append("Usa \\begin{frame}[fragile] si incluyes verbatim o \\verb")
     return errs
@@ -595,7 +655,8 @@ def soft_checks(frame: str, context: str) -> list[str]:
     text = re.sub(r"[{}$\\&_^]", "", text)
     if len(" ".join(text.split())) > MAX_TEXT_CHARS:
         warns.append("Diapositiva densa: considera partirla")
-    body = re.sub(r"\d*\.?\d+\s*(pt|em|ex|cm|mm|in)\b|\d*\.?\d+\\(text|line|column)width", "",
+    frame = re.sub(r"\\includegraphics\s*(\[[^\]]*\])?\s*\{[^}]*\}", "", frame)
+    body = re.sub(r"\d*\.?\d+\s*(pt|em|ex|cm|mm|in)\b|\d*\.?\d+\\(text|line|column)(width|height)", "",
                   _norm_numbers(frame))
     ctx = _norm_numbers(context)
     for n in sorted(set(re.findall(r"\d+(?:\.\d+)?", body))):
@@ -648,6 +709,9 @@ def kind_check(frame: str, kind: str, sources: list[str], damaged: tuple = ()) -
     if any(re.fullmatch(r"tab\d+", c) and c not in damaged for c in sources):  # tabla citada → se muestra
         rules.append(KINDS["table"][2])
     errs = [f"Formato ({kind}): {msg}" for pat, msg in dict(rules).items() if not re.search(pat, body)]
+    for c in sources:                                   # una figura citada se muestra
+        if re.fullmatch(r"fig\d+", c) and f"figuras/{c}.png" not in body:
+            errs.append(f"Formato ({kind}): cita {c} pero no la incluye: \\includegraphics{{figuras/{c}.png}}")
     return errs + filas_repetidas(body)
 
 
@@ -765,7 +829,8 @@ vacío cuando estés seguro; no inventes dudas.
 esa ecuación. Si un tab* está marcado como TABLA DAÑADA, no lo reemplaces por otra tabla del \
 paper: arma la tabla con las cifras que da el texto de esa sección (cita la sección), o usa otro \
 formato. Las fórmulas que definen el método deben aparecer en display, no descritas con \
-palabras. Si el algoritmo es central, dedícale una diapo algorithm.
+palabras. Si el algoritmo es central, dedícale una diapo algorithm. Cita un fig* \
+(kind figure) cuando una figura del paper muestre el resultado mejor que una tabla o viñetas.
 - bullets: el contenido que debe cubrir la diapo (ideas y datos concretos: cifras, nombres), \
 no el texto literal de viñetas.
 
@@ -789,6 +854,8 @@ Reglas:
 texto. Si un elemento no tiene datos, NO inventes ni copies su fila: omítelo o arma la tabla con \
 las cifras del texto; nunca dejes filas con "--". No crees columnas agregadas (mejor/peor, promedios) que la fuente no tenga. \
 Respeta qué mide cada cifra (p. ej. "ganancia frente al mejor competidor" no es "frente a X").
+- Figuras: solo las fig* del CONTEXTO, con \includegraphics y la ruta exacta que indica \
+([archivo: figuras/figN.png]); escala con width y height (keepaspectratio) para que quepa.
 - Debe caber en una pantalla. Si el contenido es mucho, prioriza y resume.
 
 Guía de estilo:
@@ -870,6 +937,10 @@ DIAPOSITIVA:
 
 CONTEXTO:
 {context}"""
+
+# Los prompts r"""…""" usan «\» al final de línea para partir frases largas: se unen aquí.
+SLIDE_PROMPT = SLIDE_PROMPT.replace("\\\n", "")
+REVIEW_SLIDE_PROMPT = REVIEW_SLIDE_PROMPT.replace("\\\n", "")
 
 REFINE_GLOBAL_PROMPT = r"""El cuerpo de esta presentación Beamer compila bien diapositiva por
 diapositiva, pero falla al compilarse completo. Corrige solo lo necesario; la
@@ -963,7 +1034,15 @@ def ingest(state: State) -> dict:
     chunks = chunk_document(text, fmt)
     if not chunks:
         raise RuntimeError("No se pudo extraer texto del documento")
-    return {"chunks": chunks, "texto": text}
+    out = {"chunks": chunks, "texto": text}
+    path = Path(state["source_path"])
+    if path.suffix == ".pdf":
+        dest = (Path(state["out_dir"]) if state.get("out_dir") else Path(tempfile.mkdtemp())) / "figuras"
+        for n, f in extraer_figuras(path, dest).items():
+            chunks[f"fig{n}"] = (f"Figure {n} (pág. {f['pagina']}): {f['caption'][:300]}\n"
+                                 f"[archivo: {f['archivo']}]")
+        out["figuras_dir"] = str(dest)
+    return out
 
 
 def asegurar_portada(o: Outline, lim: dict) -> Outline:
@@ -1026,7 +1105,7 @@ def lectura(state: State) -> dict:
         feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs) + "\n"
     else:
         raise RuntimeError(f"Lectura inválida tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
-    out = {c: t for c, t in chunks.items() if c.startswith("sec")}
+    out = {c: t for c, t in chunks.items() if c.startswith(("sec", "fig"))}
     pags = {sc.id: sc.paginas for sc in le.secciones}
     for c in out:
         if c in pags:
@@ -1166,6 +1245,99 @@ def avisos_guion(outline: dict, chunks: dict) -> dict[int, list[str]]:
     return out
 
 
+_META = {"Título": "title", "Autores": "authors", "Revista": "venue", "Notación": "notation"}
+
+
+def _esc_md(t: str) -> str:
+    """Escapa lo que un editor de markdown tomaría como formato (* _) y deja cada fórmula
+    $…$ como código en línea (los editores no aceptan matemática en línea), para el ida y vuelta."""
+    parts = re.split(r"(\$[^$]+\$)", t)
+    return "".join(f"`{x}`" if x.startswith("$") and x.endswith("$") and len(x) > 1
+                   else re.sub(r"([\\*_])", r"\\\1", x) for x in parts)
+
+
+def guion_doc_md(outline: dict, chunks: dict) -> str:
+    """Guion como documento editable (Claude Docs u otro editor de markdown). Formato fijo,
+    pensado para editarse a mano y volver a leerse con guion_desde_md."""
+    lim = STYLE_DEFAULTS
+    out = [f"# Guion: {_esc_md(outline['title'])}", ""]
+    for k, v in _META.items():
+        out += [f"{k}: {_esc_md(outline[v])}", ""]
+    out += ["", "Edita libremente: textos, viñetas, y borra o mueve secciones «## N. …». Mantén en cada "
+            "diapo la línea «Sección: … · Tipo: … · Fuentes: …». Secciones: "
+            + ", ".join(lim["secciones"]) + ". Tipos: " + ", ".join(KINDS) + ". Fuentes: ids de la "
+            "lista de abajo. La portada y la agenda se agregan solas.", ""]
+    avisos = avisos_guion(outline, chunks)
+    if avisos:
+        out += ["## ⚠ Revisar primero", ""]
+        out += [f"- Diapo {i} ({_esc_md(outline['slides'][i]['title'])}): {_esc_md(w)}"
+                for i, ws in avisos.items() for w in ws]
+        out.append("")
+    out += ["## Fuentes disponibles", ""]
+    out += [f"- {c}: {_esc_md(re.sub(r'[*_]{2,}', '', t.splitlines()[0]))}" for c, t in chunks.items()]
+    out.append("")
+    for i, sl in enumerate(outline["slides"]):
+        if sl["kind"] in FIXED_KINDS:
+            continue
+        out += [f"## {i}. {_esc_md(sl['title'])}", ""]
+        out.append(f"Sección: {sl.get('section') or '-'} · Tipo: {sl['kind']} · Fuentes: {', '.join(sl['sources'])}")
+        out.append("")
+        if sl.get("aviso"):
+            out += [f"Aviso: {_esc_md(sl['aviso'])}", ""]
+        out += [f"- {_esc_md(b)}" for b in sl["bullets"]]
+        out.append("")
+    return "\n".join(out)
+
+
+def _desescapar_md(t: str) -> str:
+    """Deshace los escapes de markdown (\\_ \\* \\# ...) fuera del código en línea, que se toma
+    literal (ahí van las fórmulas $…$)."""
+    parts = re.split(r"(`[^`]*`)", t)
+    return "".join(x[1:-1] if x.startswith("`") and x.endswith("`") and len(x) > 1
+                   else re.sub(r"\\([\\_*#\[\]()`~>|!+.\-{}&])", r"\1", x) for x in parts).strip()
+
+
+def guion_desde_md(md: str) -> dict:
+    """Inversa de guion_doc_md: el documento editado vuelve a ser un guion (dict de Outline)."""
+    data = {v: "" for v in _META.values()}
+    slides, cur = [], None
+    for raw in md.splitlines():
+        line = raw.strip()
+        m = re.match(r"^#{2,3}\s*\**\s*(\d+)\\?\.\s*(.+?)\**$", line)
+        if m:
+            cur = {"title": _desescapar_md(m.group(2)), "bullets": [], "kind": "bullets",
+                   "sources": [], "section": "", "aviso": ""}
+            slides.append(cur)
+            continue
+        if line.startswith("#"):                      # otro encabezado: Fuentes, Revisar primero...
+            cur = None
+            continue
+        field = re.match(r"^\**(Título|Autores|Revista|Notación)\**:\s*(.*)$", line)
+        if field and cur is None:
+            data[_META[field.group(1)]] = _desescapar_md(field.group(2))
+            continue
+        if cur is None:
+            continue
+        if re.match(r"^\**Secci[oó]n\**:", line):
+            line, _, aviso = line.partition("Aviso:")        # por si el editor unió las líneas
+            if aviso:
+                cur["aviso"] = _desescapar_md(aviso)
+            for part in re.split(r"\s*[·|]\s*", line):
+                k, _, v = part.partition(":")
+                k, v = k.strip("* ").lower(), _desescapar_md(v)
+                if k.startswith("secci"):
+                    cur["section"] = "" if v == "-" else v
+                elif k == "tipo":
+                    cur["kind"] = v
+                elif k == "fuentes":
+                    cur["sources"] = [x.strip("` ") for x in re.split(r"[,\s]+", v) if x.strip("` ")]
+        elif re.match(r"^\**Aviso\**:", line):
+            cur["aviso"] = _desescapar_md(line.split(":", 1)[1])
+        elif re.match(r"^([-*+]|\d+[.)])\s+", line):
+            cur["bullets"].append(_desescapar_md(re.sub(r"^([-*+]|\d+[.)])\s+", "", line)))
+    return {**data, "slides": slides}
+
+
 def guion_md(outline: dict, chunks: dict, paper: str) -> str:
     """Vista legible del guion para revisarlo en un PR (lo que se edita es el .json)."""
     titles = {c: chunks[c].splitlines()[0] for c in chunks if c.startswith("tab")}
@@ -1211,6 +1383,7 @@ def fan_out(state: State) -> list[Send]:
                     else "\n\n".join(chunks[c] for c in s["sources"])),
         "context_cifras": state.get("texto", "") if PROVIDER == "claude" else "",
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
+        "figuras_dir": state.get("figuras_dir", ""),
         "tables": indice_tablas(chunks),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
         "warnings": [],
@@ -1236,7 +1409,7 @@ def assemble(state: State) -> dict:
 
 
 def compile_full(state: State) -> dict:
-    errors, d = compile_tex(state["tex"], passes=2, ignore_vbox=True)
+    errors, d = compile_tex(state["tex"], passes=2, ignore_vbox=True, figuras=state.get("figuras_dir"))
     return {"log_errors": errors, "pdf_path": str(d / "doc.pdf")}
 
 
@@ -1314,7 +1487,8 @@ def compile_slide(s: SlideState) -> dict:
     errors = lint_frame(s["frame"])          # barato: antes de llamar a pdflatex
     if not errors:
         tex, offset = standalone(s["head"], s["frame"])
-        errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] in FIXED_KINDS)
+        errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] in FIXED_KINDS,
+                                figuras=s.get("figuras_dir"))
     spec = s["spec"]
     style = [] if spec["kind"] in FIXED_KINDS else (
         kind_check(s["frame"], spec["kind"], spec["sources"], tuple(s.get("damaged", ())))
