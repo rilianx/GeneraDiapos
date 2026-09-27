@@ -11,6 +11,9 @@ para el flujo completo y las decisiones de diseño.
   test puede simularlas y el proveedor se cambia en un solo lugar (`_chat`).
   Con `LLM_PROVIDER=claude` esas dos funciones hacen `interrupt()` (`pedir_a_claude`);
   `driver_claude.py` solo transporta tareas y respuestas, no decide pasos.
+  En ese modo el nodo `lectura` reemplaza tablas/algoritmos/ecuaciones extraídos por un
+  inventario que Claude arma viendo las páginas (validado con `validar_lectura`), y las
+  tareas llevan referencias a páginas (`fuentes_claude`) en vez del texto.
 - Una diapo que compila nunca se descarta por estilo: queda con aviso.
   Si un refinado posterior rompe la compilación, se usa `best_frame` (la última que compiló).
 - Cada compilación ocurre en su propio directorio temporal, con

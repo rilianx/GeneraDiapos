@@ -31,10 +31,17 @@ python beamer_graph.py --claude trabajo/<nombre>
 
 ## Cómo responder cada tipo de tarea
 
-- **guion**: JSON con el esquema indicado. El prompt trae los fragmentos de texto del
-  paper; además **mira como imagen las páginas con tablas** (Read con `pages`) antes
-  de asignar `sources`: decide qué tabla corresponde por sus encabezados, no por el
-  título. Si dudas, usa el campo `aviso`.
+- **lectura** (siempre la primera): lee el paper **completo como imagen** (Read con
+  `pages`, de a 20) y devuelve solo el inventario pedido: tablas (número, página,
+  encabezados y métodos tal como están escritos, qué mide cada celda), algoritmos,
+  ecuaciones clave y páginas de cada sección. No transcribas. El grafo verifica contra
+  la capa de texto del PDF que esas páginas, tablas, encabezados y métodos existan.
+  Desde ahí las tareas solo traen referencias ("Table 2 (pág. 14)", "§5.2 (págs. 13-14)"):
+  apóyate en lo que viste y vuelve a mirar la página si ya no la tienes presente (por
+  ejemplo, si la sesión se resumió o retomaste otro día).
+- **guion**: JSON con el esquema indicado. Las fuentes son los ids del inventario
+  (secciones, tablas, algoritmos, ecuaciones). Decide qué tabla corresponde por sus
+  encabezados, no por el título. Si dudas, usa el campo `aviso`.
 - **revision-guion**: muestra `trabajo/<nombre>/guion.md` al usuario y **espera su
   aprobación**. Escribe el guion final (con los cambios que pida) en la respuesta.
 - **escribir-diapo / corregir-diapo**: solo el `\begin{frame}...\end{frame}`, siguiendo

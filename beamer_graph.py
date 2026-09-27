@@ -220,6 +220,35 @@ class Review(BaseModel):
     claims: list[Claim]
 
 
+class TablaLeida(BaseModel):
+    numero: int
+    pagina: int
+    titulo: str
+    encabezados: list[str] = Field(description="encabezados reales de columnas (y de filas agrupadas)")
+    metodos: list[str] = Field(description="métodos/estrategias/variantes que compara, como aparecen")
+    que_mide: str = Field(description="qué mide cada celda y qué significa la fila de totales, si hay")
+
+
+class ElementoLeido(BaseModel):
+    id: str = Field(description="alg1, alg2... o eq1, eq2... en orden de aparición")
+    pagina: int
+    titulo: str = Field(description="nombre del algoritmo o de qué define la ecuación")
+    latex: str = Field(default="", description="solo ecuaciones: la fórmula en LaTeX")
+
+
+class SeccionLeida(BaseModel):
+    id: str = Field(description="el id sec* recibido")
+    paginas: str = Field(description='rango de páginas, p. ej. "9-10"')
+
+
+class Lectura(BaseModel):
+    """Inventario de lo que Claude leyó como imagen (modo claude). No es una transcripción."""
+    tablas: list[TablaLeida]
+    algoritmos: list[ElementoLeido]
+    ecuaciones: list[ElementoLeido]
+    secciones: list[SeccionLeida]
+
+
 FrameResult = tuple[int, str, str, int, list[str]]  # (idx, frame, status, intentos, avisos)
 
 
@@ -232,6 +261,7 @@ class State(TypedDict, total=False):
     extractor: str
     human_review: bool
     chunks: dict[str, str]
+    texto: str              # capa de texto completa del paper (chequeo de cifras en modo claude)
     outline: dict
     head: str               # base hasta el marcador (incluye \\begin{document})
     tail: str               # base desde el marcador
@@ -253,6 +283,7 @@ class SlideState(TypedDict, total=False):
     style_guide: str
     limits: dict
     damaged: list[str]      # tablas citadas que la extracción dejó dañadas
+    context_cifras: str     # modo claude: capa de texto completa para el chequeo de cifras
     tables: str             # índice de todas las tablas (título y encabezados)
     style_errors: list[str]
     fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
@@ -800,6 +831,22 @@ FRAME:
 CONTEXTO (para verificar datos):
 {context}"""
 
+LECTURA_PROMPT = r"""Lee el paper COMPLETO como imagen, página por página (Read con pages, de a \
+20 como máximo): {paper} ({n_paginas} páginas). Quedará en tu contexto: las tareas siguientes \
+solo te darán referencias (sección, página, tabla) y deberás apoyarte en lo que viste, volviendo \
+a mirar la página si no la tienes presente.
+
+No transcribas. Devuelve un INVENTARIO breve:
+- tablas: cada tabla del paper con su número, página, título, encabezados reales, qué métodos \
+compara (tal como están escritos) y qué mide cada celda. Decide por los encabezados, no solo por \
+el título: hay títulos que dicen "all the strategies" en tablas que solo tienen variantes.
+- algoritmos: cada algoritmo (id alg1, alg2... en orden), página y nombre.
+- ecuaciones: las ecuaciones que definen el problema y el método (id eq1, eq2...), página, qué \
+definen y su LaTeX.
+- secciones: para cada id de esta lista, su rango de páginas:
+{secciones}
+{feedback}"""
+
 REVIEW_SLIDE_PROMPT = r"""Eres un revisor exigente. Verifica esta diapositiva contra el CONTEXTO, que \
 es la única fuente válida (fragmentos del paper).
 
@@ -922,7 +969,7 @@ def ingest(state: State) -> dict:
     chunks = chunk_document(text, fmt)
     if not chunks:
         raise RuntimeError("No se pudo extraer texto del documento")
-    return {"chunks": chunks}
+    return {"chunks": chunks, "texto": text}
 
 
 def asegurar_portada(o: Outline, lim: dict) -> Outline:
@@ -935,6 +982,81 @@ def asegurar_portada(o: Outline, lim: dict) -> Outline:
         slides.append(SlideSpec(title="Contenido", bullets=[], kind="agenda"))
     o.slides = slides + rest
     return o
+
+
+def _tokens(t: str) -> set[str]:
+    return {w for w in re.split(r"[^0-9a-záéíóúñ]+", t.lower()) if len(w) > 1}
+
+
+def validar_lectura(le: Lectura, texto: str, n_paginas: int) -> list[str]:
+    """Chequeo determinista del inventario contra la capa de texto del PDF: lo que Claude
+    dice haber visto (páginas, números de tabla, encabezados, métodos) tiene que existir."""
+    errs, vocab = [], _tokens(texto)
+    items = [("Tabla", t.numero, t.pagina) for t in le.tablas] + \
+            [(e.id, e.id, e.pagina) for e in le.algoritmos + le.ecuaciones]
+    for nombre, num, pag in items:
+        if n_paginas and not 1 <= pag <= n_paginas:
+            errs.append(f"{nombre} {num}: página {pag} fuera de 1..{n_paginas}")
+    nums = [t.numero for t in le.tablas]
+    if len(nums) != len(set(nums)):
+        errs.append(f"Números de tabla repetidos: {nums}")
+    for t in le.tablas:
+        if not re.search(rf"\bTable\s+{t.numero}\b|\bTabla\s+{t.numero}\b", texto):
+            errs.append(f"No existe 'Table {t.numero}' en el texto del paper")
+        falt = sorted(_tokens(" ".join(t.encabezados + t.metodos)) - vocab)
+        if falt:
+            errs.append(f"Tabla {t.numero}: encabezados/métodos que no están en el paper: {falt}; "
+                        "escríbelos tal como aparecen")
+    return errs
+
+
+def lectura(state: State) -> dict:
+    """Modo claude: Claude lee el paper como imagen y deja un inventario verificable; las
+    tablas/algoritmos/ecuaciones pasan a ser referencias a páginas, no texto extraído."""
+    if PROVIDER != "claude":
+        return {}
+    chunks, texto, path = dict(state["chunks"]), state.get("texto", ""), Path(state["source_path"])
+    n_pag = 0
+    if path.suffix == ".pdf":
+        import pymupdf
+        with pymupdf.open(path) as doc:
+            n_pag = doc.page_count
+    secs = "\n".join(f"  - {c}: {t.splitlines()[0][:80]}" for c, t in chunks.items() if c.startswith("sec"))
+    feedback, errs = "", []
+    for _ in range(MAX_OUTLINE_ATTEMPTS):
+        le = call_structured(MODEL_OUTLINE, Lectura, prompt=LECTURA_PROMPT.format(
+            paper=path, n_paginas=n_pag or "?", secciones=secs, feedback=feedback))
+        errs = validar_lectura(le, texto, n_pag)
+        if not errs:
+            break
+        feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs) + "\n"
+    else:
+        raise RuntimeError(f"Lectura inválida tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
+    out = {c: t for c, t in chunks.items() if c.startswith("sec")}
+    pags = {sc.id: sc.paginas for sc in le.secciones}
+    for c in out:
+        if c in pags:
+            first, _, rest = out[c].partition("\n")
+            out[c] = f"{first} (págs. {pags[c]})\n{rest}"
+    for t in le.tablas:
+        out[f"tab{t.numero}"] = (f"Table {t.numero} (pág. {t.pagina}): {t.titulo}\n"
+                                 f"Encabezados: {' | '.join(t.encabezados)}\n"
+                                 f"Compara: {', '.join(t.metodos)}\nMide: {t.que_mide}\n"
+                                 f"[Contenido: míralo en la página {t.pagina} del paper]")
+    for e in le.algoritmos + le.ecuaciones:
+        out[e.id] = (f"{e.titulo} (pág. {e.pagina})" + (f"\n{e.latex}" if e.latex else "")
+                     + f"\n[míralo en la página {e.pagina} del paper]")
+    return {"chunks": out}
+
+
+def fuentes_claude(chunks: dict[str, str], ids) -> str:
+    """Modo claude: referencias compactas en vez del texto de los fragmentos."""
+    lines = ["(Modo Claude: leíste el paper como imagen. Estas son las referencias de las fuentes; "
+             "apóyate en lo que viste y vuelve a mirar esas páginas si no las tienes presentes.)"]
+    for c in ids:
+        t = chunks.get(c, "")
+        lines.append(f"[{c}] " + (t.splitlines()[0] if c.startswith("sec") else t))
+    return "\n".join(lines)
 
 
 def ajustar_kinds(o: Outline, chunks: dict | None = None) -> Outline:
@@ -988,7 +1110,8 @@ def outline(state: State) -> dict:
     chunks = state["chunks"]
     if state.get("outline_path"):                    # guion revisado por una persona
         return cargar_guion(state, json.loads(Path(state["outline_path"]).read_text()))
-    listing = "\n\n".join(f"[{cid}]\n{txt}" for cid, txt in chunks.items())
+    listing = (fuentes_claude(chunks, chunks) if PROVIDER == "claude"
+               else "\n\n".join(f"[{cid}]\n{txt}" for cid, txt in chunks.items()))
     base = load_base(state)
     guide, lim = load_style(state.get("style_path"))
     feedback = ""
@@ -1090,7 +1213,9 @@ def fan_out(state: State) -> list[Send]:
     guide, lim = load_style(state.get("style_path"))
     return [Send("slide", {
         "idx": i, "spec": s, "head": state["head"], "notation": o["notation"],
-        "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": "\n\n".join(chunks[c] for c in s["sources"]),
+        "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": (fuentes_claude(chunks, s["sources"]) if PROVIDER == "claude"
+                    else "\n\n".join(chunks[c] for c in s["sources"])),
+        "context_cifras": state.get("texto", "") if PROVIDER == "claude" else "",
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
         "tables": indice_tablas(chunks),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
@@ -1260,7 +1385,7 @@ def finish_slide(s: SlideState) -> dict:
     warns += [f"Compilación: {e}" for e in errors]
     warns += [f"Estilo: {e}" for e in style]
     warns += [f"Revisor: {e}" for e in s.get("fact_errors", [])]
-    warns += soft_checks(frame, s["context"] + "\n" + json.dumps(s["spec"]))
+    warns += soft_checks(frame, (s.get("context_cifras") or s["context"]) + "\n" + json.dumps(s["spec"]))
     return {"frames": [(s["idx"], frame, status, s["attempts"], warns)]}
 
 # ----------------------------------------------------------------------------
@@ -1287,6 +1412,7 @@ def build_slide_graph():
 def build_graph(checkpointer=None):
     g = StateGraph(State)
     g.add_node("ingest", ingest)
+    g.add_node("lectura", lectura)
     g.add_node("outline", outline)
     g.add_node("review_outline", review_outline)
     g.add_node("slide", build_slide_graph())
@@ -1295,7 +1421,8 @@ def build_graph(checkpointer=None):
     g.add_node("refine_global", refine_global)
     g.add_node("write_outputs", write_outputs)
     g.add_edge(START, "ingest")
-    g.add_edge("ingest", "outline")
+    g.add_edge("ingest", "lectura")
+    g.add_edge("lectura", "outline")
     g.add_edge("outline", "review_outline")
     g.add_conditional_edges("review_outline", fan_out, ["slide"])
     g.add_edge("slide", "assemble")

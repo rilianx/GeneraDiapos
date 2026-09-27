@@ -26,6 +26,11 @@ calls = {"write": {}, "refine": 0, "review": 0}
 
 
 def fake_structured(model, schema, prompt, effort=None):
+    if schema is bg.Lectura:                           # modo claude: inventario de lo leído
+        calls["lectura"] = calls.get("lectura", 0) + 1
+        return bg.Lectura(tablas=[], algoritmos=[], secciones=[], ecuaciones=[
+            bg.ElementoLeido(id="eq1", pagina=1, titulo="Lagrangiano",
+                             latex=r"L(x,\lambda)=f(x)+\sum_j \lambda_j g_j(x)")])
     if schema is bg.Review:                            # revisor: marca la cifra 99.9, que no está en la fuente
         calls["review"] += 1
         bad = "99.9" in prompt.split("CONTEXTO:")[0]
@@ -208,7 +213,20 @@ while (code := driver_claude.run(cli)) == 3:
             ans = fake_text("claude", prompt)
         Path(t["respuesta"]).write_text(ans)
 assert code == 0 and (tmp / "out_claude" / "presentacion.pdf").exists()
-assert (work / "guion.md").exists() and rounds >= 3      # guion, revisión humana, diapos...
+assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revisión, diapos...
+assert calls["lectura"] == 1
+tareas_diapo = "".join(p.read_text() for p in (work / "tareas").glob("*.md"))
+# validar_lectura: lo que Claude dice haber visto tiene que existir en el texto del paper
+txt = "Table 2 Average CPU time. lsmear lsmear-MG time #box gain"
+ok = bg.Lectura(tablas=[bg.TablaLeida(numero=2, pagina=3, titulo="t", encabezados=["time", "#box"],
+                                      metodos=["lsmear-MG"], que_mide="s")],
+                algoritmos=[], ecuaciones=[], secciones=[])
+assert not bg.validar_lectura(ok, txt, 5)
+mal = ok.model_copy(deep=True)
+mal.tablas[0].metodos = ["lsmear-XYZ"]
+mal.tablas[0].pagina = 9
+errs = bg.validar_lectura(mal, txt, 5)
+assert any("fuera de" in e for e in errs) and any("xyz" in e for e in errs), errs
 # una respuesta que no cumple el esquema no se acepta
 bad = driver_claude.leer_respuestas([{"id": "x", "tarea": "t", "respuesta": str(tmp / "mal.json"),
                                       "tipo": "json", "esquema": "Review"}], {})

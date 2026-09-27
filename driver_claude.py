@@ -36,6 +36,8 @@ def etiqueta(p: dict) -> str:
         return "revision-guion"
     prompt = p.get("prompt", "")
     title = re.search(r"^Título: (.+)$", prompt, re.M)
+    if p.get("esquema") == "Lectura":
+        return "lectura"
     if p.get("esquema") == "Outline":
         return "guion"
     if p.get("esquema") == "Review":
