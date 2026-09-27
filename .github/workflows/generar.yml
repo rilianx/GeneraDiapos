@@ -1,0 +1,107 @@
+# Genera la presentación de cada paper nuevo en papers/ y abre un PR con el resultado.
+# También se puede lanzar a mano desde la pestaña Actions indicando la ruta del paper.
+name: generar presentacion
+
+on:
+  push:
+    branches: [main]
+    paths: ["papers/**"]
+  workflow_dispatch:
+    inputs:
+      paper:
+        description: "Ruta del paper (p. ej. papers/lsmear.pdf)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: generar-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
+      LLM_MODEL_OUTLINE: ${{ vars.LLM_MODEL_OUTLINE }}
+      LLM_MODEL_SLIDES: ${{ vars.LLM_MODEL_SLIDES }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar LaTeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-recommended texlive-latex-extra \
+            texlive-pictures texlive-science texlive-fonts-recommended
+
+      - name: Instalar dependencias Python
+        run: pip install -r requirements.txt
+
+      - name: Elegir papers a procesar
+        id: papers
+        env:
+          INPUT_PAPER: ${{ github.event.inputs.paper }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$INPUT_PAPER" ]; then
+            files="$INPUT_PAPER"
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            files=$(git ls-files 'papers/*.pdf' 'papers/*.tex' 'papers/*.md')
+          else
+            files=$(git diff --name-only --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- \
+                    'papers/*.pdf' 'papers/*.tex' 'papers/*.md')
+          fi
+          echo "Papers: $files"
+          { echo "files<<EOF"; echo "$files"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Generar presentaciones
+        if: steps.papers.outputs.files != ''
+        env:
+          FILES: ${{ steps.papers.outputs.files }}
+        run: |
+          status=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            name=$(basename "${f%.*}")
+            echo "::group::$f"
+            python beamer_graph.py "$f" --out "presentaciones/$name" --concurrency 3 || status=1
+            echo "::endgroup::"
+          done <<< "$FILES"
+          exit $status
+
+      - name: Subir resultados como artefacto
+        if: always() && steps.papers.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: presentaciones
+          path: presentaciones/
+          if-no-files-found: ignore
+
+      - name: Abrir PR con las presentaciones
+        if: steps.papers.outputs.files != ''
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: presentaciones/${{ github.run_id }}
+          commit-message: "Presentaciones generadas (run ${{ github.run_id }})"
+          title: "Presentaciones generadas"
+          add-paths: presentaciones/
+          body: |
+            Generado automáticamente a partir de:
+            ```
+            ${{ steps.papers.outputs.files }}
+            ```
+            Revisa `informe.md` de cada carpeta: estado por diapositiva, intentos y avisos
+            (estilo y cifras a verificar). El PDF también está en los artefactos del run.

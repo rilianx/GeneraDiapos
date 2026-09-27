@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+salida/
+*.aux
+*.log
+*.nav
+*.out
+*.snm
+*.toc
