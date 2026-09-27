@@ -1,0 +1,198 @@
+{
+  "title": "\\texttt{lsmear}: selección de variables con multiplicadores lagrangianos",
+  "authors": "Ignacio Araya y Bertrand Neveu",
+  "venue": "\\textit{Journal of Global Optimization}, 2017",
+  "notation": "\\small\n\\begin{itemize}\n  \\item $\\mathbf{x}$: caja actual; $x_i$: i-ésima variable; $\\mathrm{wid}(x_i)$: ancho de $x_i$.\n  \\item $f$: función objetivo; $g_j$: restricción j-ésima; $\\mathbf{g}(\\mathbf{x})\\le 0$: factibilidad.\n  \\item $J_{ji}$: sobreestimación intervalar de $\\partial g_j/\\partial x_i$ en la caja actual.\n  \\item $\\lambda^*$: multiplicadores duales óptimos de la linealización; $D_i$: sensibilidad ponderada de $x_i$.\n  \\item $L(\\mathbf{x},\\lambda)$: Lagrangiano; $\\mathrm{smear}(x_i,g_j)$: impacto de $x_i$ sobre $g_j$.\n\\end{itemize}",
+  "slides": [
+    {
+      "title": "\\texttt{lsmear}: selección de variables con multiplicadores lagrangianos",
+      "bullets": [],
+      "kind": "title",
+      "sources": [],
+      "section": "",
+      "aviso": ""
+    },
+    {
+      "title": "Contenido",
+      "bullets": [],
+      "kind": "agenda",
+      "sources": [],
+      "section": "",
+      "aviso": ""
+    },
+    {
+      "title": "El branch-and-bound elige la variable que más promete",
+      "bullets": [
+        "La optimización global continua se resuelve con interval branch and bound.",
+        "Cada nodo es una caja; se parte por una variable.",
+        "La selección de variable domina el tamaño del árbol.",
+        "\u0006bien escoger reduce tiempo y número de cajas."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec3",
+        "sec4",
+        "sec5",
+        "alg1"
+      ],
+      "section": "Introducción",
+      "aviso": ""
+    },
+    {
+      "title": "Los métodos smear tratan todas las restricciones igual",
+      "bullets": [
+        "Smear-based combina derivadas e intervalos de variables.",
+        "smearsum, smearmax y smearsumrel agregan impactos sobre todas las restricciones.",
+        "La debilidad clave: restricciones activas e inactivas pesan igual.",
+        "Eso diluye la información útil para bisecar mejor."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec3"
+      ],
+      "section": "Introducción",
+      "aviso": ""
+    },
+    {
+      "title": "\\texttt{lsmear} pondera restricciones con duales óptimos",
+      "bullets": [
+        "Usa una linealización de Taylor alrededor del punto medio.",
+        "Resuelve un programa lineal para obtener \\(\\lambda^*\\).",
+        "Luego calcula un smear sobre el Lagrangiano ponderado.",
+        "La variable elegida maximiza ese impacto ponderado."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec6",
+        "sec7"
+      ],
+      "section": "Propuesta",
+      "aviso": ""
+    },
+    {
+      "title": "La linealización produce una sensibilidad ponderada",
+      "bullets": [
+        "\\(g_j(\\mathbf{x})\\approx g_j(\\mathrm{mid}(\\mathbf{x})) + J_{j\\cdot}(\\mathbf{x}-\\mathrm{mid}(\\mathbf{x}))\\).",
+        "\\(D_i=\\lambda_i^*+\\sum_j \\lambda_{n+j}^* J_{ji}\\).",
+        "Se usa \\(|D_i|\\,\\mathrm{wid}(x_i)\\) como impacto de la variable.",
+        "Si el LP falla, cae en \\texttt{smearsum}."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec7",
+        "alg2",
+        "alg3"
+      ],
+      "section": "Propuesta",
+      "aviso": ""
+    },
+    {
+      "title": "El algoritmo separa linealización y selección",
+      "bullets": [
+        "Primera fase: linealiza y resuelve un LP sobre la caja.",
+        "Segunda fase: acumula impactos y elige la mayor variable.",
+        "La implementación es simple y no intrusiva.",
+        "Caso borde: LP sin solución o no acotado \\rightarrow \\texttt{smearsum}."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "alg2",
+        "alg3"
+      ],
+      "section": "Propuesta",
+      "aviso": ""
+    },
+    {
+      "title": "Cuatro variantes aíslan el valor de cada idea",
+      "bullets": [
+        "\\texttt{lsmear-MG}: usa gradiente en el punto medio.",
+        "\\texttt{lsmear-LI}: usa impactos lineales en lugar de originales.",
+        "\\texttt{lsmear-LR}: toma duales de una relajación lineal.",
+        "\\texttt{lsmear-LRI}: combina relajación lineal e impactos relajados."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec8"
+      ],
+      "section": "Propuesta",
+      "aviso": ""
+    },
+    {
+      "title": "El experimento usa IbexOpt y COCONUT",
+      "bullets": [
+        "Implementación en \\texttt{IbexOpt} con \\texttt{HC4}, \\texttt{ACID(HC4)} y relajación lineal.",
+        "Búsqueda: \\texttt{FeasibleDiving}; precisión: \\(\\epsilon=10^{-6}\\).",
+        "76 instancias de COCONUT; 5 corridas por instancia.",
+        "Se reporta promedio de 3 ejecuciones, descartando mejor y peor."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec9"
+      ],
+      "section": "Experimentos",
+      "aviso": ""
+    },
+    {
+      "title": "\\texttt{lsmear} supera a las estrategias clásicas",
+      "bullets": [
+        "Mejor perfil de rendimiento frente a \\texttt{rr}, \\texttt{lf}, \\texttt{smax}, \\texttt{ssum} y \\texttt{ssr}.",
+        "Aproximadamente 90\\% de instancias caen por debajo de 2\\times el mejor tiempo.",
+        "La ganancia media frente a \\texttt{ssum} es 1.30.",
+        "\\texttt{lf} es la peor entre las clásicas."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec10"
+      ],
+      "section": "Experimentos",
+      "aviso": "¿Figura 1 o resumen textual? No hay tabla para el perfil; usar el texto de sec10."
+    },
+    {
+      "title": "\\texttt{lsmear-MG} y \\texttt{lsmear-LR} lideran entre variantes",
+      "bullets": [
+        "Las mejores variantes son \\texttt{lsmear-MG}, \\texttt{lsmear-LR} y \\texttt{lsmear}.",
+        "\\texttt{lsmear-LI} y \\texttt{lsmear-LRI} quedan por detrás.",
+        "\\texttt{lsmear-MG} evita modificar el contractor del solver.",
+        "Su ganancia media frente a \\texttt{lsmear-LR} es 1.05."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec11",
+        "tab2"
+      ],
+      "section": "Experimentos",
+      "aviso": "tab2 parece la tabla adecuada; la leeré como subconjunto comparativo de variantes."
+    },
+    {
+      "title": "\\texttt{lsmear-MG} también domina con otra búsqueda",
+      "bullets": [
+        "Con \\texttt{minLB}, la mejora sobre \\texttt{ssum} alcanza 1.63.",
+        "Con \\texttt{FeasibleDiving}, la mejora sobre \\texttt{ssum} es 1.43.",
+        "La búsqueda \\texttt{FeasibleDiving} supera a \\texttt{minLB} en todos los casos.",
+        "La combinación más fuerte sigue siendo \\texttt{lsmear-MG} + \\texttt{FeasibleDiving}."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec12",
+        "tab3"
+      ],
+      "section": "Experimentos",
+      "aviso": "tab3 es la comparación entre estrategias de búsqueda; usar solo las cifras relevantes."
+    },
+    {
+      "title": "La idea central mejora selección y simplicidad",
+      "bullets": [
+        "Aporta una heurística smear con ponderación dual.",
+        "Evita tratar por igual restricciones activas e inactivas.",
+        "Las variantes muestran que la linealización basta para obtener mejoras fuertes.",
+        "Trabajo futuro: incorporar la violación de restricciones y su ponderación."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec13"
+      ],
+      "section": "Conclusiones",
+      "aviso": ""
+    }
+  ]
+}
