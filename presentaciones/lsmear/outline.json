@@ -1,0 +1,144 @@
+{
+  "title": "lsmear: selección de variables con multiplicadores duales",
+  "authors": "Ignacio Araya \\and Bertrand Neveu",
+  "venue": "J\\ Glob\\ Optim\\ (2017)",
+  "notation": "\\small\\begin{itemize}\n  \\item $\\mathbf{x}\\in\\R^n$: caja actual; $x_i$ su $i$-ésima variable.\n  \\item $f$: función objetivo; $g(x)\\le 0$: restricciones.\n  \\item $\\mathbf{J}_{ji}$: sobreestimación intervalar de $\\partial g_j/\\partial x_i$.\n  \\item $\\lambda^\\ast$: multiplicadores duales óptimos de la linealización.\n  \\item $\\operatorname{wid}(\\mathbf{x}_i)$: ancho del intervalo de $x_i$.\n  \\item $D_i$: impacto ponderado de $x_i$ en la función tipo Lagrangiana.\n\\end{itemize}",
+  "slides": [
+    {
+      "title": "lsmear pondera restricciones con duales óptimos",
+      "bullets": [
+        "Mejora la selección de variables en solvers de branch and bound intervalar.",
+        "Usa una linealización de Taylor para estimar multiplicadores duales.",
+        "Combina esos pesos con una medida de smear.",
+        "Busca elegir la variable con mayor impacto global."
+      ],
+      "kind": "title",
+      "sources": []
+    },
+    {
+      "title": "El problema es optimización global continua",
+      "bullets": [
+        "Se minimiza $f(x)$ sobre una caja $\\mathbf{x}\\in\\R^n$.",
+        "Las restricciones son $g(x)\\le 0$ y pueden ser no convexas.",
+        "El solver explora cajas por bisección y poda.",
+        "La variable elegida afecta el tamaño del árbol."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec3",
+        "sec4",
+        "sec5"
+      ]
+    },
+    {
+      "title": "Smear ignora la importancia de cada restricción",
+      "bullets": [
+        "Las estrategias clásicas agregan impactos por restricción.",
+        "Tratan todas las restricciones como igualmente importantes.",
+        "Eso diluye restricciones activas y sobrevalora las inactivas.",
+        "La selección resultante puede ser poco informativa."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec2",
+        "sec7"
+      ]
+    },
+    {
+      "title": "Los multiplicadores duales miden relevancia",
+      "bullets": [
+        "La función de Lagrange combina objetivo y restricciones.",
+        "$\\lambda_j^\\ast$ es el multiplicador dual óptimo de la restricción $j$.",
+        "Las restricciones inactivas tienen $\\lambda_j^\\ast=0$.",
+        "Los duales ponderan el cambio del óptimo ante cada restricción."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec6"
+      ]
+    },
+    {
+      "title": "lsmear resuelve una linealización y luego aplica smear",
+      "bullets": [
+        "Linealiza $g_j$ alrededor del punto medio de la caja.",
+        "Resuelve un programa lineal con la caja actual.",
+        "Obtiene $\\lambda^\\ast$ del dual óptimo.",
+        "Calcula el impacto $|D_i\\,\\operatorname{wid}(x_i)|$ y elige el máximo."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "sec7",
+        "alg2",
+        "alg3"
+      ]
+    },
+    {
+      "title": "Si el LP falla, lsmear cae a smearsum",
+      "bullets": [
+        "Si el problema lineal no tiene solución, usa una alternativa robusta.",
+        "La fase 1 sigue siendo barata frente al filtrado del solver.",
+        "La estrategia mantiene la simplicidad de la arquitectura original.",
+        "El método no depende del contratista de relajación convexa."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "alg2",
+        "sec7",
+        "sec13"
+      ]
+    },
+    {
+      "title": "\texttt{lsmear-MG} iguala o mejora a \texttt{lsmear}",
+      "bullets": [
+        "En la Tabla 2, \texttt{lsmear-MG} logra el mejor tiempo total.",
+        "\texttt{lsmear-LI} y \texttt{lsmear-LRI} son claramente peores.",
+        "La mejor variante conserva la idea central con menos complejidad.",
+        "La ganancia total supera a \texttt{ssum} y \texttt{ssum-active}."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab3"
+      ]
+    },
+    {
+      "title": "\texttt{lsmear} supera a las estrategias clásicas",
+      "bullets": [
+        "En la Tabla 1, \texttt{lsmear} reduce tiempos en muchos casos difíciles.",
+        "\texttt{lf} suele ser la peor estrategia clásica.",
+        "\texttt{lsmear} alcanza el mejor tiempo total entre las comparadas.",
+        "El número de nodos también baja en varios instancias."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab1"
+      ]
+    },
+    {
+      "title": "La ganancia persiste frente a otras referencias",
+      "bullets": [
+        "Frente a \texttt{minLB} y \texttt{FeasibleDiving}, \texttt{lsmear-MG} mantiene ventaja.",
+        "La Tabla 3 muestra mejores tiempos totales con \texttt{lsmear-MG}.",
+        "La comparación valida que el efecto no depende solo del buscador.",
+        "La estrategia sigue siendo competitiva en distintos contextos."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab4",
+        "sec12"
+      ]
+    },
+    {
+      "title": "La conclusión es simple: ponderar ayuda",
+      "bullets": [
+        "\texttt{lsmear} usa información dual para priorizar variables.",
+        "La idea mejora el branch and bound intervalar sin cambios profundos.",
+        "\texttt{lsmear-MG} ofrece el mejor equilibrio entre rendimiento y simplicidad.",
+        "Futuros trabajos: incorporar violación de restricciones como señal adicional."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec13"
+      ]
+    }
+  ]
+}

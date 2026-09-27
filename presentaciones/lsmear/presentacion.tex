@@ -1,0 +1,163 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+
+% Macros disponibles para el modelo: se detectan automáticamente y se le
+% informan en cada diapositiva. Agrega aquí las que necesite cada paper.
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% lsmear: selección de variables con multiplicadores duales, Ignacio Araya \and Bertrand Neveu y J\ Glob\ Optim\ (2017) se rellenan desde el guion.
+% Si los reemplazas a mano, se respetan tal cual.
+\title{lsmear: selección de variables con multiplicadores duales}
+\subtitle{J\ Glob\ Optim\ (2017)}
+\author{Ignacio Araya \and Bertrand Neveu}
+\date{}
+
+\begin{document}
+
+\begin{frame}[plain]
+\titlepage
+\end{frame}
+
+\begin{frame}{El problema es optimización global continua}
+\small
+\begin{itemize}
+  \item Se minimiza $f(\mathbf{x})$ sobre una caja $\mathbf{x}\in\R^n$.
+  \item Las restricciones son $g(\mathbf{x})\le 0$ y pueden ser no convexas.
+  \item El solver construye un árbol de búsqueda con \textbf{bisección} y \textbf{poda}.
+  \item Cada bisección divide una caja en dos subcajas.
+  \item La \alert{variable elegida} influye en el tamaño del árbol.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Smear ignora la importancia de cada restricción}
+\small
+\begin{itemize}
+  \item Las estrategias clásicas agregan impactos por restricción.
+  \item \alert{Tratan todas las restricciones como igualmente importantes.}
+  \item Eso diluye restricciones activas y sobrevalora las inactivas.
+  \item La selección resultante puede ser poco informativa.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Los multiplicadores duales miden relevancia}
+\small
+\begin{itemize}
+  \item La \alert{función de Lagrange} combina objetivo y restricciones con pesos duales.
+  \item
+  \[
+    L(\mathbf{x},\lambda)=f(\mathbf{x})+\sum_{j=1}^m \lambda_j\, g_j(\mathbf{x})
+  \]
+  \item Esta expresión suma $f(\mathbf{x})$ y las restricciones $g_j(\mathbf{x})\le 0$.
+  \item $\lambda_j^\ast$ es el multiplicador dual óptimo asociado a la restricción $j$.
+  \item Las restricciones inactivas tienen $\lambda_j^\ast=0$.
+  \item Los duales ponderan el cambio del óptimo ante variaciones en cada restricción.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} linealiza y luego aplica smear}
+\small
+\begin{itemize}
+  \item Lineariza cada $g_j$ en el punto medio de la caja actual.
+  \item Resuelve el programa lineal con las restricciones de la caja.
+  \item \alert{Usa} $\lambda^\ast$ como solución dual óptima de esa linealización.
+  \item Calcula $|D_i\,\operatorname{wid}(x_i)|$ para cada variable.
+  \item Elige la variable con el máximo impacto para bisección.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Si el LP falla, lsmear cae a smearsum}
+\small
+\begin{itemize}
+  \item Si la linealización no tiene solución o es ilimitada, \texttt{lsmear} usa \alert{\texttt{smearsum}}.
+  \item La fase 1 es barata: resuelve un LP lineal, no el problema original.
+  \item La selección variable sigue la arquitectura original: linealizar, evaluar, bisecar.
+  \item No depende del \textbf{contratista} de relajación convexa usado por el solver.
+  \item Con ello, \texttt{lsmear} mantiene una estrategia robusta y simple.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} iguala o mejora a \texttt{lsmear}}
+\small
+\begin{table}
+\centering
+\begin{tabular}{lccc}
+\toprule
+Variante & Tiempo total & Ganancia total & Lectura \\
+\midrule
+\texttt{lsmear} & 21\,035 & 0.91 & Base \\
+\texttt{lsmear-MG} & \alert{19\,181} & \alert{1.07} & Menor complejidad \\
+\texttt{lsmear-LI} & 20\,429 & 0.94 & Peor total \\
+\texttt{lsmear-LRI} & 20\,429 & 0.94 & Peor total \\
+\texttt{ssum} & -- & -- & Superado \\
+\texttt{ssum-active} & -- & -- & Superado \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\small
+\begin{itemize}
+  \item En la Tabla 2, \texttt{lsmear-MG} logra el mejor tiempo total.
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} quedan claramente por detrás.
+  \item \texttt{lsmear-MG} conserva la idea central con menos complejidad.
+  \item Su ganancia total supera a \texttt{ssum} y \texttt{ssum-active}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} supera a las estrategias clásicas}
+\small
+\begin{table}
+\centering
+\begin{tabular}{lcc}
+\toprule
+Estrategia & Tiempo total & Nodos \\
+\midrule
+\texttt{lsmear} & \alert{mejor} & \alert{baja en varias instancias} \\
+\texttt{lf} & peor entre las clásicas & muchas veces mayor \\
+\texttt{ssr} / \texttt{smax} / \texttt{ssum} / \texttt{rr} & comparables, pero menos favorables & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\small
+\begin{itemize}
+  \item En la Tabla 1, \texttt{lsmear} reduce tiempos en muchos casos difíciles.
+  \item \texttt{lf} suele ser la estrategia clásica con peor desempeño.
+  \item \texttt{lsmear} alcanza el mejor tiempo total entre las comparadas.
+  \item El número de nodos también baja en varias instancias.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} mantiene la ventaja frente a referencias}
+\small
+\begin{itemize}
+  \item La Tabla 3 confirma mejores tiempos totales con \texttt{lsmear-MG}.
+  \item Frente a \texttt{minLB} y \texttt{FeasibleDiving}, \texttt{lsmear-MG} conserva ventaja.
+  \item La comparación valida que \alert{el efecto no depende solo del buscador}.
+  \item En ambos buscadores, \texttt{lsmear-MG} sigue siendo competitiva.
+  \item Los mejores tiempos de la tabla aparecen, en su mayoría, con \texttt{lsmear-MG}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{La conclusión es simple: ponderar ayuda}
+\small
+\begin{itemize}
+  \item \texttt{lsmear} usa \alert{información dual} para priorizar variables.
+  \item Pondera las restricciones mediante los multiplicadores lagrangianos óptimos.
+  \item Mejora el \texttt{branch and bound} intervalar sin cambios profundos.
+  \item \texttt{lsmear-MG} logra el mejor equilibrio entre rendimiento y simplicidad.
+  \item Frente a \texttt{ViolationTransfer}, es menos intrusivo y no cambia la estrategia general.
+  \item Futuro: añadir la violación de restricciones como señal adicional.
+\end{itemize}
+\end{frame}
+
+\end{document}
