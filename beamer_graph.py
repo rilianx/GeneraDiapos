@@ -831,18 +831,12 @@ FRAME:
 CONTEXTO (para verificar datos):
 {context}"""
 
-LECTURA_PROMPT = r"""Lee el paper COMPLETO como imagen, página por página (Read con pages, de a \
-20 como máximo): {paper} ({n_paginas} páginas). Quedará en tu contexto: las tareas siguientes \
-solo te darán referencias (sección, página, tabla) y deberás apoyarte en lo que viste, volviendo \
-a mirar la página si no la tienes presente.
+LECTURA_PROMPT = """Lee el paper COMPLETO como imagen, página por página (Read con pages, de a 20 como máximo): {paper} ({n_paginas} páginas). Quedará en tu contexto: las tareas siguientes solo te darán referencias (sección, página, tabla) y deberás apoyarte en lo que viste, volviendo a mirar la página si no la tienes presente.
 
 No transcribas. Devuelve un INVENTARIO breve:
-- tablas: cada tabla del paper con su número, página, título, encabezados reales, qué métodos \
-compara (tal como están escritos) y qué mide cada celda. Decide por los encabezados, no solo por \
-el título: hay títulos que dicen "all the strategies" en tablas que solo tienen variantes.
+- tablas: cada tabla del paper con su número, página, título, encabezados reales, qué métodos compara (tal como están escritos) y qué mide cada celda. Decide por los encabezados, no solo por el título: hay títulos que dicen "all the strategies" en tablas que solo tienen variantes.
 - algoritmos: cada algoritmo (id alg1, alg2... en orden), página y nombre.
-- ecuaciones: las ecuaciones que definen el problema y el método (id eq1, eq2...), página, qué \
-definen y su LaTeX.
+- ecuaciones: las ecuaciones que definen el problema y el método (id eq1, eq2...), página, qué definen y su LaTeX.
 - secciones: para cada id de esta lista, su rango de páginas:
 {secciones}
 {feedback}"""
@@ -1385,7 +1379,9 @@ def finish_slide(s: SlideState) -> dict:
     warns += [f"Compilación: {e}" for e in errors]
     warns += [f"Estilo: {e}" for e in style]
     warns += [f"Revisor: {e}" for e in s.get("fact_errors", [])]
-    warns += soft_checks(frame, (s.get("context_cifras") or s["context"]) + "\n" + json.dumps(s["spec"]))
+    # modo claude: solo contra el texto del paper (el guion también lo escribe Claude)
+    ref = s.get("context_cifras") or (s["context"] + "\n" + json.dumps(s["spec"]))
+    warns += soft_checks(frame, ref)
     return {"frames": [(s["idx"], frame, status, s["attempts"], warns)]}
 
 # ----------------------------------------------------------------------------
