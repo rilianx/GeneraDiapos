@@ -1,0 +1,6 @@
+langgraph>=1.0
+langchain-openai>=0.3
+langchain-anthropic>=1.0   # solo si usas Claude
+pydantic>=2
+pymupdf4llm
+# opcional, mejor con ecuaciones: marker-pdf

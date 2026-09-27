@@ -1,0 +1,35 @@
+# Reglas de estilo para las diapositivas.
+#
+# [guia]    Texto libre que el modelo recibe al hacer el guion y cada diapo.
+#           No se verifica automáticamente.
+# [limites] Reglas medibles. Se verifican en código sobre cada frame; si alguna
+#           falla, la diapo vuelve a refinarse. Si tras los intentos sigue
+#           fallando pero compila, se conserva y queda como aviso en el informe.
+
+[guia]
+texto = '''
+- Una idea por diapositiva. El título la afirma como frase breve
+  ("lsmear reduce el tiempo a la mitad"), no como rótulo ("Resultados").
+- Viñetas cortas, en paralelo gramatical, sin párrafos.
+- \alert{} para el único concepto clave de la diapositiva, no como adorno.
+- Ecuaciones: solo las esenciales, cada una acompañada de una línea que diga
+  qué significa.
+- Tablas: solo las filas y columnas que sostienen el mensaje; resalta el mejor
+  valor con \alert{}.
+- Nombres de algoritmos, software y variantes en \texttt{}.
+- Español neutro; conserva en inglés solo los términos técnicos sin traducción
+  establecida.
+'''
+
+[limites]
+max_items = 6                       # \item por diapositiva
+max_palabras_item = 18              # las fórmulas cuentan como una palabra
+max_anidamiento = 2                 # niveles de itemize/enumerate
+max_caracteres_titulo = 60
+max_alerts = 2
+max_negritas = 3
+sin_punto_final = false             # true: prohibe punto final en viñetas
+prohibir_colores_directos = true    # \color, \textcolor: usa \alert o macros de la base
+prohibir_vspace_negativo = true
+# \footnotesize, \scriptsize y \tiny solo se permiten dentro de tablas y algoritmos
+tamanos_permitidos = ['\small']

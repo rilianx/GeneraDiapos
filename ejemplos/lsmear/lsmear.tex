@@ -1,0 +1,293 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\metroset{sectionpage=none}
+\setbeamerfont{title}{size=\Large}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes}
+
+\newcommand{\intv}[1]{\mathbf{#1}}
+\newcommand{\wid}{\operatorname{wid}}
+\newcommand{\midp}{\operatorname{mid}}
+\newcommand{\smear}{\operatorname{smear}}
+\newcommand{\ls}{\texttt{lsmear}}
+
+\title{\texttt{lsmear}: una estrategia de selección de variables para solvers Branch \& Bound por intervalos}
+\subtitle{I.~Araya, B.~Neveu --- \emph{Journal of Global Optimization}, 2018}
+\author{Presentación del artículo}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+% ---------------------------------------------------------------
+\begin{frame}{Contexto: optimización global continua por intervalos}
+\textbf{Problema (NCOP)}
+\[
+\min_{x\in\intv{x}} f(x)\quad \text{s.a.}\quad g(x)\le 0,
+\qquad f:\mathbb{R}^n\to\mathbb{R},\; g:\mathbb{R}^n\to\mathbb{R}^m \text{ no convexas}
+\]
+$\intv{x}=\intv{x}_1\times\dots\times\intv{x}_n$ es una \emph{caja} (producto de intervalos).
+
+\vspace{1ex}
+\textbf{Branch \& Bound por intervalos (Alg.~1)} --- se agrega la variable $x_o = f(x)$
+\begin{itemize}
+  \item \textbf{Selección de nodo}: caja de $L$ (p.\,ej.\ minLB o FeasibleDiving).
+  \item \textbf{Bisección}: partir la caja en dos por el punto medio de \emph{una} variable.
+  \item \textbf{Filtrado} (contractores: HC4, ACID, relajaciones lineales) $\Rightarrow$ cota inferior $\underline{x_o}$.
+  \item \textbf{Upper bounding}: búsqueda de puntos factibles $\Rightarrow$ actualiza $UB$.
+  \item Termina cuando $UB-LB\le\varepsilon$.
+\end{itemize}
+\alert{Pregunta del paper:} ¿qué variable conviene bisecar?
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Estrategias clásicas de bisección}
+\begin{columns}[T]
+\column{0.48\textwidth}
+\textbf{Sin información del sistema}
+\begin{itemize}
+  \item \texttt{round-robin} (rr): cicla $i \to (i+1)\bmod n$. Sensible al orden inicial.
+  \item \texttt{largest-first} (lf): mayor $\wid(\intv{x}_i)$. Supone que dominios grandes impactan más.
+\end{itemize}
+\column{0.48\textwidth}
+\textbf{Basadas en smear} (Kearfott; Hansen \& Walster)
+\[
+\smear(x_i,g_j)=|\intv{a}_{ji}|\cdot\wid(\intv{x}_i)
+\]
+$\intv{a}_{ji}$: sobreestimación por intervalos de $\partial g_j/\partial x_i$ en $\intv{x}$ (diferenciación automática).\\[1ex]
+Estima (Taylor 1er orden) cuánto se reduce la imagen de $g_j$ al reducir el dominio de $x_i$.
+\end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Agregaciones del valor smear y su limitación}
+\begin{align*}
+\texttt{smearmax}:&\quad \arg\max_i\ \max_{j} \smear(x_i,g_j)\\
+\texttt{smearsum}:&\quad \arg\max_i\ \sum_{j} \smear(x_i,g_j)\\
+\texttt{smearsumrel}:&\quad \arg\max_i\ \sum_{j} \frac{\smear(x_i,g_j)}{\sum_k \smear(x_k,g_j)}
+\end{align*}
+(La función objetivo se incluye en $g$.)
+
+\vspace{1ex}
+\begin{alertblock}{Problema}
+Todas las restricciones pesan igual, incluso las \emph{inactivas} en el óptimo, que no influyen en la solución.
+\end{alertblock}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Trabajo relacionado: \texttt{ViolationTransfer} (Tawarmalani \& Sahinidis, 2004)}
+\begin{itemize}
+  \item Usa el Lagrangiano de una \emph{relajación convexa} y su solución óptima $x^*$.
+  \item Define para cada variable un intervalo $\intv{x}^v_i\subset\intv{x}_i$ (caja mínima que contiene $x^*$ y mantiene factible cada restricción univariada).
+  \item Con relajación lineal $\min \sum c_i x_i$ s.a.\ $\sum_i a_{ji}x_i\le 0$, el impacto estimado es
+  \[
+    (\overline{x^v_i}-\underline{x^v_i})\cdot\Bigl|c_i+\sum_{j}\lambda^*_j a_{ji}\Bigr|,
+  \]
+  con $\lambda^*$ el dual óptimo de la relajación.
+\end{itemize}
+\vspace{1ex}
+\textbf{Diferencias de \ls{}}: (1) linealización simple en vez de relajación convexa sofisticada; (2) mide impacto en el Lagrangiano del problema \emph{original}; (3) usa $\intv{x}$ directamente en lugar de $\intv{x}^v$ (no requiere reformular el problema).
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Multiplicadores de Lagrange óptimos}
+\textbf{Lagrangiano y dual}
+\[
+L(x,\lambda)=f(x)+\sum_{j=1}^m \lambda_j g_j(x),\qquad
+h(\lambda)=\inf_{x\in\intv{x}} L(x,\lambda),\qquad
+\max_{\lambda\ge 0} h(\lambda)
+\]
+\begin{itemize}
+  \item $h(\lambda)\le f(x^*)$ para todo $\lambda\ge 0$ (dualidad débil).
+  \item $\lambda^*_j$ estima la tasa de cambio del óptimo ante cambios en $g_j$.
+  \item \alert{$\lambda^*_j=0$ para restricciones inactivas} $\Rightarrow$ ponderación natural.
+\end{itemize}
+\textbf{Caso lineal}
+\[
+\min_x c^Tx \ \text{s.a.}\ Ax\le b
+\qquad\Longleftrightarrow\qquad
+\max_\lambda -b^T\lambda \ \text{s.a.}\ A^T\lambda + c = 0,\ \lambda\ge 0
+\]
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{\ls{}: idea en dos fases}
+\begin{columns}[T]
+\column{0.5\textwidth}
+\textbf{Fase 1 --- Linealización + LP}
+\[
+g^l_j(x)=g_j(\midp(\intv{x}))+\sum_{i=1}^n \midp(\intv{J}_{ji})\,(x_i-\midp(\intv{x}_i))
+\]
+\begin{itemize}
+  \item Se agregan las cotas $\underline{x_i}\le x_i\le\overline{x_i}$, $\intv{x}_o=[-\infty,\infty]$.
+  \item Se resuelve con simplex (SoPlex) $\Rightarrow$ dual óptimo $\lambda^*$.
+  \item Si es infactible o no acotado $\Rightarrow$ \texttt{smearsum}.
+\end{itemize}
+\column{0.5\textwidth}
+\textbf{Fase 2 --- Smear del Lagrangiano}
+\[
+\mathcal{L}(x)=x_o+\sum_{j=1}^m \lambda^*_j\, g_j(x)
+\]
+\begin{itemize}
+  \item Un solo ``objetivo'' que aproxima el problema completo.
+  \item Se elige $\arg\max_i \smear(x_i,\mathcal{L})$.
+  \item Sin restricciones, coincide con cualquier estrategia smear.
+\end{itemize}
+\end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Algoritmo \ls{}}
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja $\intv{x}$, Jacobiano por intervalos $\intv{J}$, restricciones $g$}
+\KwOut{variable a bisecar}
+$g^l \gets g(\midp(\intv{x})) + \midp(\intv{J})\cdot(x-\midp(\intv{x}))$\;
+$\intv{x}_o\gets[-\infty,\infty]$\;
+$(x_o,\lambda^t)\gets \texttt{optimize}(\min x_o \text{ s.a. } \underline{x_i}\le x_i\le\overline{x_i},\ g^l_j(x)\le 0)$\;
+\eIf{$x_o\neq\emptyset$}{
+  $\lambda^*\gets\lambda^t$; $\text{max\_impact}\gets 0$\;
+  \For{$i\in\{1..n\}$}{
+     $\intv{D}\gets \lambda^*_i$ \tcp*{dual de la cota de $x_i$}
+     \For{$j\in\{1..m\}$}{ $\intv{D}\gets \intv{D}+\lambda^*_{n+j}\,\intv{J}_{ji}$\; }
+     \If{$|\intv{D}\cdot\wid(\intv{x}_i)|>\text{max\_impact}$}{
+        $\text{max\_impact}\gets|\intv{D}\cdot\wid(\intv{x}_i)|$; $var\gets i$\;}
+  }
+  \Return $var$\;
+}{\Return \texttt{smearsum}$(\intv{x},\intv{J})$\;}
+\end{algorithm}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Variantes}
+\begin{center}
+\scriptsize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Variante & Origen de $\lambda^*$ & Función para el impacto & ¿Modifica contractor? \\
+\midrule
+\ls{}          & linealización (mid del Jacobiano)     & Lagrangiano original           & No \\
+\ls{}-MG       & linealización (gradiente en mid)      & Lagrangiano original           & No \\
+\ls{}-LI       & linealización                          & Lagrangiano \emph{linealizado} & No \\
+\ls{}-LR       & relajación lineal (X-Taylor + AF2)    & Lagrangiano original           & Sí \\
+\ls{}-LRI      & relajación lineal                      & Lagrangiano de la relajación   & Sí \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{itemize}
+  \item \textbf{MG}: calcula dos gradientes (uno puntual, uno por intervalos).
+  \item \textbf{LI}: reemplaza $\intv{J}_{ji}$ por $\midp(\intv{J}_{ji})$ en la Fase 2.
+  \item \textbf{LR/LRI}: $\lambda^*$ se suma sobre las varias restricciones lineales que relajan cada $g_j$; la variable se elige justo después del filtrado y se guarda en el nodo.
+  \item \ls{}-LRI es la variante más cercana a \texttt{ViolationTransfer}.
+\end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Configuración experimental}
+\begin{itemize}
+  \item Implementación en \textbf{IbexOpt} (librería Ibex): contractores HC4, ACID(HC4), relajación AF2 + XNewton; upper bounding inHC4 e InnerPolytope; selección de nodo FeasibleDiving; $\varepsilon=10^{-6}$.
+  \item Hardware: PowerEdge T420, Intel Xeon 2.2\,GHz, 8\,GB RAM.
+  \item \textbf{Instancias}: series 1 y 2 de COCONUT; 76 instancias resueltas por alguna estrategia entre 2\,s y 7200\,s.
+  \item 5 ejecuciones por instancia; se descartan la mejor y la peor y se promedian las 3 restantes.
+  \item Solo se bisecan variables con $\wid>10^{-7}$.
+\end{itemize}
+\vspace{1ex}
+\textbf{Métrica}: ganancia relativa promedio de $a$ sobre $b$,
+\[
+t_r(a,b,\pi)=\frac{t(a,\pi)}{t(a,\pi)+t(b,\pi)},\qquad
+\text{gain}(a,b)=\frac{\sum_\pi t_r(b,a,\pi)}{\sum_\pi t_r(a,b,\pi)}
+\]
+y perfiles de desempeño (proporción de instancias resueltas en $\le$ \emph{factor} $\times$ mejor tiempo).
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Resultados: \ls{} vs.\ estrategias clásicas}
+\begin{columns}[T]
+\column{0.5\textwidth}
+\textbf{Ganancia relativa promedio de \ls{}}
+\begin{center}
+\begin{tabular}{@{}lc@{}}
+\toprule
+vs.\ & gain \\ \midrule
+round-robin  & 2.04 \\
+largest-first & 2.48 \\
+smearmax     & 1.34 \\
+smearsum     & 1.30 \\
+smearsumrel  & 1.32 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\column{0.5\textwidth}
+\begin{itemize}
+  \item \texttt{lf} es la peor; las tres smear son comparables entre sí.
+  \item $\approx 90\%$ de las instancias las resuelve \ls{} en menos de $2\times$ el mejor tiempo.
+  \item Caso extremo: instancia resuelta en $\sim$2\,s por \ls{} vs.\ $\sim$4096\,s por \texttt{smearsum}.
+  \item El LP de \ls{} tiene sobrecosto despreciable: el contractor (X-Taylor/AF2) ya resuelve hasta $2n$ LPs por nodo.
+\end{itemize}
+\end{columns}
+\vspace{1ex}
+\texttt{smearsum} se toma como referencia clásica en el resto de experimentos.
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Resultados: variantes de \ls{}}
+\textbf{Ganancia relativa de \ls{}-MG (la mejor) respecto a}
+\begin{center}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+ & \ls{} & \ls{}-LR & \ls{}-LI & \ls{}-LRI & ssum-active & ssum \\ \midrule
+gain & 1.07 & 1.05 & 2.25 & 1.43 & 1.42 & 1.43 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{itemize}
+  \item \ls{}, \ls{}-MG y \ls{}-LR: desempeño similar y el mejor del grupo. Tiempo total (76 inst.): 21\,035\,s / 19\,181\,s / 20\,429\,s.
+  \item \textbf{LI y LRI} (impacto en el Lagrangiano de la relajación, no del original) son las peores.
+  \item \texttt{ssum-active} (descartar inactivas sin ponderar) $\approx$ \texttt{smearsum}: detectar activas no basta, hay que \emph{ponderar}.
+  \item Se prefiere \ls{}-MG: levemente mejor y \emph{no requiere modificar el contractor}.
+\end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Interacción con la estrategia de búsqueda}
+Comparación de \texttt{smearsum}, \texttt{smearsumrel} y \ls{}-MG bajo \textbf{minLB} y \textbf{FeasibleDiving}.
+\begin{center}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Búsqueda & ssum & ssr & MG & gain MG \\ \midrule
+minLB          & 59\,274 & 76\,392 & 29\,136 & 2.03 \\
+FeasibleDiving & 43\,867 & 65\,789 & 19\,181 & 2.29 \\
+\bottomrule
+\end{tabular}\\[0.5ex]
+{\footnotesize Tiempo total (s) sobre el conjunto; gain frente al mejor competidor.}
+\end{center}
+\begin{itemize}
+  \item FeasibleDiving supera a minLB con cualquier selección de variable.
+  \item \ls{}-MG supera a las smear clásicas con cualquier selección de nodo (gain 1.63 con minLB, 1.43 con FD vs.\ \texttt{smearsum}).
+  \item \ls{}-MG + minLB es \emph{incluso} algo mejor que \texttt{smearsum} + FeasibleDiving.
+\end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Conclusiones y trabajo futuro}
+\textbf{Aportes}
+\begin{itemize}
+  \item \ls{}: smear sobre un Lagrangiano cuyos multiplicadores se obtienen resolviendo, con simplex, una linealización de Taylor del problema.
+  \item Supera significativamente a todas las estrategias clásicas de bisección y a la variante tipo \texttt{ViolationTransfer} (\ls{}-LRI).
+  \item Clave: tras obtener $\lambda^*$, medir el impacto en las \emph{restricciones originales}, no en la relajación.
+  \item No intrusivo: independiente del contractor de relajación convexa; no altera el esquema del solver.
+\end{itemize}
+\textbf{Trabajo futuro}
+\begin{itemize}
+  \item Incorporar los errores de violación de restricciones (como \texttt{ViolationTransfer}).
+  \item Evaluar si evitar bisecar variables que aparecen solo en restricciones lineales (donde la relajación ya es óptima) ayuda o perjudica indirectamente.
+\end{itemize}
+\end{frame}
+
+\end{document}
