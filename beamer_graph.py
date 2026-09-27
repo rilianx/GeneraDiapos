@@ -74,6 +74,9 @@ STYLE_DEFAULTS = {
     "sin_punto_final": False, "prohibir_colores_directos": True,
     "prohibir_vspace_negativo": True, "tamanos_permitidos": [r"\small"],
     "max_fraccion_vinetas": 0.4, "max_bloques": 2, "prohibir_alert_en_alertblock": True,
+    # [estructura] de estilo.toml
+    "secciones": ["Introducción", "Trabajo relacionado", "Propuesta", "Experimentos", "Conclusiones"],
+    "agenda": True,
 }
 SLIDES_MARK = "%%SLIDES%%"
 
@@ -162,6 +165,11 @@ KIND_ALIASES = {"alertblock": "block", "exampleblock": "block", "blocks": "block
                 "two_columns": "columns", "column": "columns", "itemize": "bullets",
                 "list": "bullets", "tabular": "table", "math": "equation", "pseudocode": "algorithm"}
 
+# Diapos que arma el código, sin LLM ni revisor
+FIXED_KINDS = ("title", "agenda")
+TITLE_FRAME = "\\begin{frame}[plain]\n\\titlepage\n\\end{frame}"
+AGENDA_FRAME = "\\begin{frame}{Contenido}\n\\tableofcontents\n\\end{frame}"
+
 # Una diapo de solo viñetas que cita una tabla o ecuación pasa a mostrarla.
 # (Un alg* puede citarse como contexto sin mostrar el pseudocódigo.)
 BULLETS_UPGRADE = {"tab": "table", "eq": "equation"}
@@ -172,9 +180,10 @@ BULLETS_UPGRADE = {"tab": "table", "eq": "equation"}
 class SlideSpec(BaseModel):
     title: str
     bullets: list[str]
-    kind: str = Field(description="title, bullets, columns, block, equation, algorithm o table")
+    kind: str = Field(description="bullets, columns, block, equation, algorithm o table")
     sources: list[str] = Field(default_factory=list,
                                description="IDs de fragmentos que usa la diapo")
+    section: str = Field(default="", description="sección de la presentación a la que pertenece")
 
     @field_validator("kind")
     @classmethod
@@ -556,7 +565,8 @@ def load_style(path: str | None) -> tuple[str, dict]:
     if not p.exists():
         return "", dict(STYLE_DEFAULTS)
     data = tomllib.loads(p.read_text())
-    return data.get("guia", {}).get("texto", "").strip(), {**STYLE_DEFAULTS, **data.get("limites", {})}
+    return data.get("guia", {}).get("texto", "").strip(), {
+        **STYLE_DEFAULTS, **data.get("limites", {}), **data.get("estructura", {})}
 
 
 def describe_limits(lim: dict) -> str:
@@ -693,9 +703,12 @@ Devuelve:
 - title, authors, venue: en LaTeX válido (escapa &, %, _).
 - notation: glosario breve de los símbolos que TODAS las diapositivas deben usar igual.
   Puedes apoyarte en estas macros ya definidas: {macros}
-- slides: la primera con kind='title' y sin sources. Cada una de las demás debe listar en sources \
+- slides: la portada y la agenda se agregan solas; devuelve solo las diapositivas de contenido. \
+Cada una debe listar en sources \
 los IDs exactos de los fragmentos que necesita (incluidos eq*, tab*, alg* si usa esa ecuación, \
 tabla o algoritmo). Si un tema no cabe en los límites, divídelo en dos diapositivas.
+- section: la sección de cada diapo, una de: {secciones}. Respeta ese orden y dale a cada \
+sección al menos una diapo si el paper tiene contenido para ella.
 - kind: elige el formato que mejor muestre cada idea y VARÍALOS a lo largo de la presentación:
 {kinds}
   Cita un tab* solo si la diapo muestra esa tabla (kind table o columns); cita un eq* si muestra \
@@ -893,6 +906,18 @@ def ingest(state: State) -> dict:
     return {"chunks": chunks}
 
 
+def asegurar_portada(o: Outline, lim: dict) -> Outline:
+    """La presentación empieza con portada y, si se pide, la agenda (ambas sin LLM)."""
+    fixed = [s for s in o.slides if s.kind in FIXED_KINDS]
+    rest = [s for s in o.slides if s.kind not in FIXED_KINDS]
+    title = next((s for s in fixed if s.kind == "title"), SlideSpec(title=o.title, bullets=[], kind="title"))
+    slides = [title]
+    if lim.get("agenda", True):
+        slides.append(SlideSpec(title="Contenido", bullets=[], kind="agenda"))
+    o.slides = slides + rest
+    return o
+
+
 def ajustar_kinds(o: Outline, chunks: dict | None = None) -> Outline:
     chunks = chunks or {}
     for s in o.slides:
@@ -909,7 +934,7 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
     errs = []
     lim = lim or STYLE_DEFAULTS
     for i, s in enumerate(o.slides):
-        if s.kind != "title" and s.kind not in KINDS:
+        if s.kind not in FIXED_KINDS and s.kind not in KINDS:
             errs.append(f"Diapositiva {i} ('{s.title}') tiene kind='{s.kind}' inválido; "
                         f"usa uno de: {', '.join(KINDS)}")
             continue
@@ -919,14 +944,20 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
         bad = [c for c in s.sources if c not in chunks]
         if bad:
             errs.append(f"Diapositiva {i} ('{s.title}') cita fragmentos inexistentes: {bad}")
-        if s.kind != "title" and not s.sources:
+        if s.kind not in FIXED_KINDS and not s.sources:
             errs.append(f"Diapositiva {i} ('{s.title}') no tiene sources")
+    secs = lim.get("secciones") or []
+    if secs:
+        bad = [f"{i} ('{s.title}'): '{s.section}'" for i, s in enumerate(o.slides)
+               if s.kind not in FIXED_KINDS and s.section not in secs]
+        if bad:
+            errs.append(f"Diapositivas sin sección válida {bad}; usa una de: {', '.join(secs)}")
     return errs
 
 
 def variedad_outline(o: Outline, lim: dict) -> list[str]:
     """Aviso (no bloquea): demasiadas diapos de solo viñetas."""
-    content = [s for s in o.slides if s.kind != "title"]
+    content = [s for s in o.slides if s.kind not in FIXED_KINDS]
     n_bul = sum(s.kind == "bullets" for s in content)
     if len(content) >= 4 and n_bul > lim["max_fraccion_vinetas"] * len(content):
         return [f"{n_bul} de {len(content)} diapositivas son solo viñetas; máximo "
@@ -945,9 +976,10 @@ def outline(state: State) -> dict:
     for attempt in range(1, MAX_OUTLINE_ATTEMPTS + 1):
         o = call_structured(MODEL_OUTLINE, Outline, effort=REASONING_OUTLINE, prompt=OUTLINE_PROMPT.format(
             kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
+            secciones=", ".join(lim.get("secciones") or ["(libre)"]),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide=guide or "-", limits=describe_limits(lim)))
-        o = ajustar_kinds(o, chunks)
+        o = asegurar_portada(ajustar_kinds(o, chunks), lim)
         errs = validate_outline(o, chunks, lim)
         soft = variedad_outline(o, lim)
         if not errs and (not soft or attempt == MAX_OUTLINE_ATTEMPTS):
@@ -961,8 +993,9 @@ def outline(state: State) -> dict:
 
 
 def cargar_guion(state: State, data: dict) -> dict:
-    o = ajustar_kinds(Outline.model_validate(data), state["chunks"])
-    errs = validate_outline(o, state["chunks"], load_style(state.get("style_path"))[1])
+    lim = load_style(state.get("style_path"))[1]
+    o = asegurar_portada(ajustar_kinds(Outline.model_validate(data), state["chunks"]), lim)
+    errs = validate_outline(o, state["chunks"], lim)
     if errs:
         raise RuntimeError(f"El guion editado no es válido: {errs}")
     d = o.model_dump()
@@ -980,7 +1013,7 @@ def guion_md(outline: dict, chunks: dict, paper: str) -> str:
     out += [f"- `{c}`: {t}" for c, t in titles.items()] or ["- (ninguna)"]
     out.append("")
     for i, sl in enumerate(outline["slides"]):
-        out.append(f"## {i}. {sl['title']}  \n`{sl['kind']}` · fuentes: "
+        out.append(f"## {i}. {sl['title']}  \n`{sl['kind']}` · sección: {sl.get('section') or '-'} · fuentes: "
                    f"{', '.join(f'`{c}`' for c in sl['sources']) or '-'}\n")
         out += [f"- {b}" for b in sl["bullets"]]
         out.append("")
@@ -1013,8 +1046,13 @@ def fan_out(state: State) -> list[Send]:
 
 
 def assemble(state: State) -> dict:
-    body = []
+    body, current = [], None
+    slides = state["outline"]["slides"]
     for idx, frame, status, _, _ in sorted(state["frames"]):
+        sec = slides[idx].get("section") or ""
+        if slides[idx]["kind"] not in FIXED_KINDS and sec and sec != current:
+            body.append(f"\\section{{{sec}}}")
+            current = sec
         if status == "failed":
             title = state["outline"]["slides"][idx]["title"]
             frame = (f"% TODO: la diapositiva {idx} no compiló tras {MAX_SLIDE_ATTEMPTS} intentos\n"
@@ -1086,8 +1124,8 @@ def write_outputs(state: State) -> dict:
 # ----------------------------------------------------------------------------
 def write_slide(s: SlideState) -> dict:
     spec = s["spec"]
-    if spec["kind"] == "title":      # determinista: no hace falta LLM
-        return {"frame": "\\begin{frame}[plain]\n\\titlepage\n\\end{frame}"}
+    if spec["kind"] in FIXED_KINDS:  # deterministas: no hace falta LLM
+        return {"frame": TITLE_FRAME if spec["kind"] == "title" else AGENDA_FRAME}
     frame = call_text(MODEL_SLIDES, SLIDE_PROMPT.format(
         macros=s["macros"], packages=s["packages"], guide=s["style_guide"],
         limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"],
@@ -1100,9 +1138,9 @@ def compile_slide(s: SlideState) -> dict:
     errors = lint_frame(s["frame"])          # barato: antes de llamar a pdflatex
     if not errors:
         tex, offset = standalone(s["head"], s["frame"])
-        errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] == "title")
+        errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] in FIXED_KINDS)
     spec = s["spec"]
-    style = [] if spec["kind"] == "title" else (
+    style = [] if spec["kind"] in FIXED_KINDS else (
         kind_check(s["frame"], spec["kind"], spec["sources"], tuple(s.get("damaged", ())))
         + style_check(s["frame"], s["limits"]))
     out = {"errors": errors, "style_errors": style}
@@ -1114,7 +1152,7 @@ def compile_slide(s: SlideState) -> dict:
 def route_slide(s: SlideState) -> str:
     if (s["errors"] or s["style_errors"]) and s["attempts"] < MAX_SLIDE_ATTEMPTS:
         return "refine_slide"
-    if s["errors"] or s["spec"]["kind"] == "title" or s.get("reviews", 0) >= MAX_REVIEWS:
+    if s["errors"] or s["spec"]["kind"] in FIXED_KINDS or s.get("reviews", 0) >= MAX_REVIEWS:
         return "finish_slide"
     return "review_slide"                       # compila: se revisan las afirmaciones
 

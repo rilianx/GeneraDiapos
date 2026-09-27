@@ -33,12 +33,12 @@ flowchart TD
 
     subgraph PRINCIPAL["Grafo principal (State)"]
         ingest["<b>ingest</b><br/>preflight de base.tex<br/>extracción + troceado<br/>sec* · eq* · tab* · alg*<br/>tablas: título, unión, dañadas"]
-        outline["<b>outline</b> · LLM guion<br/>razonamiento medium<br/>ajustar_kinds + validate_outline<br/>hasta 3 intentos con feedback"]
+        outline["<b>outline</b> · LLM guion<br/>razonamiento medium<br/>portada + agenda + secciones<br/>ajustar_kinds + validate_outline<br/>hasta 3 intentos con feedback"]
         cargar["<b>cargar_guion</b><br/>guion revisado (--guion)<br/>sin LLM, misma validación"]
         review_outline{"<b>review_outline</b><br/>¿--review?"}
         pausa[/"pausa: la persona edita<br/>outline_borrador.json"/]
         fan_out[["<b>fan_out</b><br/>Send × N diapositivas<br/>en paralelo"]]
-        assemble["<b>assemble</b><br/>frames dentro de base.tex<br/>fallida → marcador pendiente"]
+        assemble["<b>assemble</b><br/>frames dentro de base.tex<br/>\section{} por sección<br/>fallida → marcador pendiente"]
         compile_full{"<b>compile_full</b><br/>pdflatex × 2"}
         refine_global["<b>refine_global</b> · LLM<br/>solo el cuerpo, no la base"]
         write_outputs(["<b>write_outputs</b><br/>presentacion.tex / .pdf<br/>outline.json · informe.md<br/>(avisos + tokens)"])
@@ -57,7 +57,7 @@ flowchart TD
     fan_out --> write_slide
 
     subgraph SLIDE["Subgrafo por diapositiva (SlideState)"]
-        write_slide["<b>write_slide</b> · LLM<br/>plantilla del kind<br/>portada: \titlepage sin LLM"]
+        write_slide["<b>write_slide</b> · LLM<br/>plantilla del kind<br/>portada y agenda: sin LLM"]
         compile_slide{"<b>compile_slide</b><br/>lint · pdflatex aislado<br/>kind_check · style_check<br/>si compila → best_frame"}
         refine_slide["<b>refine_slide</b> · LLM<br/>errores + estilo + afirmaciones<br/>attempts + 1"]
         review_slide{"<b>review_slide</b> · LLM revisor<br/>afirmaciones vs fuentes<br/>+ índice de tablas<br/>reviews + 1"}
@@ -174,6 +174,7 @@ En local lo equivalente es `--solo-guion guiones/x.json` y luego `--guion guione
 | Revisor de afirmaciones | variables `LLM_MODEL_REVIEW` (por defecto el de diapos) y `LLM_REASONING_REVIEW` (por defecto `medium`) | cada diapo que compila se verifica contra sus fragmentos; lo no respaldado se corrige una vez (presupuesto propio, `MAX_REVIEWS`) y, si persiste, queda en `informe.md` |
 | Preámbulo, tema, macros | `base.tex` | debe tener exactamente un `%%SLIDES%%` |
 | Título/autores | `<<TITLE>>`, `<<AUTHORS>>`, `<<VENUE>>` en `base.tex` | se rellenan desde el guion; si los escribes a mano se respetan |
+| Secciones y agenda | `[estructura]` en `estilo.toml` | `secciones` (orden de la presentación) y `agenda` (diapo con `\tableofcontents`); la portada siempre va primero |
 | Reglas de estilo | `estilo.toml` | `[guia]` va al prompt; `[limites]` se verifica en código |
 | Reintentos, tolerancias, nº de diapos | constantes al inicio de `beamer_graph.py` | `MAX_SLIDE_ATTEMPTS`, `OVERFULL_TOLERANCE_PT`, `N_SLIDES`… |
 | Extracción de PDF | `--extractor marker` | mejor con ecuaciones; requiere `pip install marker-pdf` |

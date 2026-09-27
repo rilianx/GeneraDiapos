@@ -23,11 +23,12 @@ texto = '''
 - Nombres de algoritmos, software y variantes en \texttt{}.
 - Español neutro; conserva en inglés solo los términos técnicos sin traducción
   establecida.
-- Estructura del guion, en este orden: contexto y problema; estrategias
-  existentes y su limitación; trabajo relacionado; idea del método; algoritmo
-  (pseudocódigo si el paper lo trae); configuración experimental;
-  resultado principal contra las estrategias de referencia; luego variantes y
-  análisis adicionales; conclusiones y trabajo futuro.
+- Dentro de las secciones (ver [estructura]): Introducción = contexto, problema
+  y limitación de lo existente; Trabajo relacionado = enfoques cercanos y en qué
+  se diferencian; Propuesta = idea, fórmulas que la definen, algoritmo
+  (pseudocódigo si el paper lo trae) y variantes; Experimentos = configuración,
+  resultado principal contra las referencias, luego variantes y análisis
+  adicionales; Conclusiones = aportes y trabajo futuro.
 - Los detalles de implementación (casos borde, fallbacks) van como una línea
   dentro de la diapositiva del algoritmo, no en una diapositiva propia.
 '''
@@ -49,3 +50,9 @@ tamanos_permitidos = ['\small']
 max_fraccion_vinetas = 0.4
 max_bloques = 2                     # block/alertblock/exampleblock por diapositiva
 prohibir_alert_en_alertblock = true
+
+[estructura]
+# Secciones de la presentación, en orden. Cada diapo de contenido pertenece a una;
+# al ensamblar se inserta \section{...} (aparecen en la agenda y en el tema).
+secciones = ["Introducción", "Trabajo relacionado", "Propuesta", "Experimentos", "Conclusiones"]
+agenda = true                       # diapo "Contenido" con \tableofcontents tras la portada

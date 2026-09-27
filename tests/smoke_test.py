@@ -36,9 +36,9 @@ def fake_structured(model, schema, prompt, effort=None):
         slides=[
             bg.SlideSpec(title="Portada", bullets=[], kind="title"),
             bg.SlideSpec(title="Método", bullets=["Lagrangiano"], kind="equation",
-                         sources=["sec2", "eq1"]),
+                         sources=["sec2", "eq1"], section="Propuesta"),
             bg.SlideSpec(title="Resultados", bullets=["Ganancia"], kind="bullets",
-                         sources=["sec3"]),
+                         sources=["sec3"], section="Experimentos"),
         ])
 
 
@@ -73,7 +73,8 @@ res = graph.invoke({"source_path": str(tmp / "paper.tex"), "out_dir": str(out),
                     "human_review": True}, cfg)
 assert "__interrupt__" in res, "debía pausar para revisión"
 edited = res["__interrupt__"][0].value["outline"]
-edited["slides"][2]["title"] = "Resultados"
+assert [s["kind"] for s in edited["slides"]][:2] == ["title", "agenda"]   # portada y agenda
+edited["slides"][3]["title"] = "Resultados"
 res = graph.invoke(Command(resume=edited), cfg)
 
 print("chunks:", list(res["chunks"]))
@@ -81,9 +82,11 @@ print("refinados:", calls["refine"])
 print((out / "informe.md").read_text())
 assert (out / "presentacion.pdf").exists()
 assert not res["log_errors"]
+tex = (out / "presentacion.tex").read_text()
+assert "\\tableofcontents" in tex and tex.index("\\section{Propuesta}") < tex.index("\\section{Experimentos}")
 assert calls["review"] > 0, "el revisor debía ejecutarse en las diapos que compilan"
 # Tipos de diapo: el guion debe respetar fuentes y variedad; el frame, su formato
-spec = lambda k, src: bg.SlideSpec(title="T", bullets=["x"], kind=k, sources=src)
+spec = lambda k, src: bg.SlideSpec(title="T", bullets=["x"], kind=k, sources=src, section="Propuesta")
 chunks = {"sec1": "", "tab1": "", "eq1": ""}
 o = bg.Outline(title="", authors="", venue="", notation="", slides=[
     bg.SlideSpec(title="P", bullets=[], kind="title"), spec("bullets", ["sec1", "tab1"]),
@@ -97,6 +100,13 @@ assert not bg.kind_check(r"\begin{frame}{T}\begin{tabular}{l}a\end{tabular}\end{
 assert bg.kind_check(r"\begin{frame}{T}$x$\end{frame}", "block", ["eq1"]) == [
     "Formato (block): usa al menos un block, alertblock o exampleblock"]
 assert bg.SlideSpec(title="T", bullets=[], kind="alertblock").kind == "block"
+
+# Portada y agenda se garantizan; toda diapo de contenido necesita una sección válida
+o2 = bg.asegurar_portada(bg.Outline(title="Demo", authors="", venue="", notation="", slides=[
+    spec("block", ["sec1"]), bg.SlideSpec(title="X", bullets=[], kind="block", sources=["sec1"])]),
+    bg.STYLE_DEFAULTS)
+assert [s.kind for s in o2.slides] == ["title", "agenda", "block", "block"]
+assert any("sin sección válida" in e for e in bg.validate_outline(o2, chunks))
 
 # Tablas en markdown: título pegado, numeración del paper, trozos unidos, rotas marcadas
 MD = """# Resultados
