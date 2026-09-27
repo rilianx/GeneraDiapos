@@ -1,7 +1,7 @@
 # Reglas de estilo para las diapositivas.
 #
-# [guia]    Texto libre que el modelo recibe al hacer el guion y cada diapo.
-#           No se verifica automáticamente.
+# [guia]    Texto libre, no se verifica automáticamente. `texto` lo reciben el guion
+#           y cada diapo; `guion`, solo el guion (estructura y reparto del contenido).
 # [limites] Reglas medibles. Se verifican en código sobre cada frame; si alguna
 #           falla, la diapo vuelve a refinarse. Si tras los intentos sigue
 #           fallando pero compila, se conserva y queda como aviso en el informe.
@@ -23,6 +23,10 @@ texto = '''
 - Nombres de algoritmos, software y variantes en \texttt{}.
 - Español neutro; conserva en inglés solo los términos técnicos sin traducción
   establecida.
+'''
+
+# Solo para el guion: cómo repartir el contenido entre diapositivas.
+guion = '''
 - Dentro de las secciones (ver [estructura]): Introducción = contexto, problema
   y limitación de lo existente; Trabajo relacionado = enfoques cercanos y en qué
   se diferencian; Propuesta = idea, fórmulas que la definen, algoritmo

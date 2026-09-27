@@ -86,8 +86,13 @@ edited["slides"][3]["aviso"] = "la ganancia sale del texto, no de una tabla"
 res = graph.invoke(Command(resume=edited), cfg)
 # Cada diapo recibe su sección, su aviso y el guion completo con ella marcada
 p_met, p_res = calls["write"]["Método"], calls["write"]["Resultados"]
-assert "(sección: Propuesta)" in p_met and "→ 2. Método" in p_met and "  3. Resultados" in p_met
-assert "[Experimentos]" in p_met and "Portada" not in p_met.split("Guion completo")[1].split("Título:")[0]
+assert "esta es la diapo 2 (sección: Propuesta)" in p_met and "  2. Método" in p_met and "  3. Resultados" in p_met
+plan = lambda p: p.split("guion completo:\n\n")[1].split("\n\nTítulo:")[0]
+assert plan(p_met) == plan(p_res) and "[Experimentos]" in plan(p_met) and "Portada" not in plan(p_met)
+# lo que es solo del guion (reparto entre diapos, % de viñetas) no se repite en cada diapo
+assert "Dentro de las secciones" not in p_met and "solo con viñetas" not in p_met
+assert "Dentro de las secciones" in bg.guia_guion(None)
+assert "solo con viñetas" in bg.describe_limits(bg.STYLE_DEFAULTS, guion=True)
 assert "Aviso del guion" in p_res and "sale del texto" in p_res and "Aviso del guion" not in p_met
 
 print("chunks:", list(res["chunks"]))
@@ -206,12 +211,17 @@ work = tmp / "claude"
 cli = argparse.Namespace(claude=str(work), source=str(tmp / "paper.tex"), out=str(tmp / "out_claude"),
                          base=str(bg.DEFAULT_BASE), estilo=str(bg.DEFAULT_STYLE), extractor="pymupdf",
                          review=True, guion=None, concurrency=2)
-rounds = 0
+rounds, comunes = 0, 0
 while (code := driver_claude.run(cli)) == 3:
     rounds += 1
     assert rounds < 20, "el modo claude no terminó"
     for t in json.loads((work / "pendientes.json").read_text()):
-        prompt = Path(t["tarea"]).read_text().split("---\n\n", 1)[1].split("\n\n---\n")[0]
+        tarea = Path(t["tarea"]).read_text()
+        comunes += tarea.count("[bloque común")
+        prompt = driver_claude.expandir(tarea, work / driver_claude.COMUN)
+        if t["esquema"] == "Review":                  # revisión independiente, con un subagente
+            assert "PARA QUIEN COORDINA" in prompt and "subagente" in prompt
+        prompt = prompt.split("---\n\n", 1)[1].split("\n\n---\n")[0]
         if t["tipo"] == "guion":
             ans = (work / "guion.json").read_text()
         elif t["tipo"] == "json":
@@ -222,6 +232,21 @@ while (code := driver_claude.run(cli)) == 3:
 assert code == 0 and (tmp / "out_claude" / "presentacion.pdf").exists()
 assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revisión, diapos...
 assert calls["lectura"] == 1
+assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
+# compactar: lo repetido va una vez al archivo común y expandir lo devuelve intacto
+largo = "Reglas:\n" + "- regla fija\n" * 20
+cs, com = driver_claude.compactar([f"A\n\n{largo}\n\nTítulo: 1", f"B\n\n{largo}\n\nTítulo: 2", "C corta"])
+assert len(com) == 1 and largo not in cs[0] and cs[2] == "C corta"
+(tmp / "c.md").write_text("# x\n\n" + "\n\n".join(f"## {k}\n\n{v}" for k, v in com.items()) + "\n")
+assert driver_claude.expandir(cs[1], tmp / "c.md") == f"B\n\n{largo}\n\nTítulo: 2"
+# índice de tablas con el inventario de la lectura: sin «encabezados: Encabezados:»
+idx = bg.indice_tablas({"tab1": "Table 1 (pág. 3): t\nEncabezados: a | b\nCompara: x, y\nMide: z"})
+assert "encabezados: Encabezados" not in idx and "Compara: x, y" in idx
+# pies de figura: sin el rótulo repetido y cortados en una frase
+pie = bg.pie_corto("Fig. 2 Uno dos. " + "palabra " * 60)
+assert pie.startswith("Uno dos.") and pie.endswith("palabra…") and len(pie) <= 301
+larga = "Fig. 3 " + "Una frase bastante larga que explica la figura. " * 8
+assert bg.pie_corto(larga).endswith("figura.") and len(bg.pie_corto(larga)) <= 300
 tareas_diapo = "".join(p.read_text() for p in (work / "tareas").glob("*.md"))
 # validar_lectura: lo que Claude dice haber visto tiene que existir en el texto del paper
 txt = "Table 2 Average CPU time. lsmear lsmear-MG time #box gain"

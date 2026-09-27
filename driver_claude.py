@@ -17,6 +17,7 @@ Códigos de salida: 0 listo, 3 hay tareas pendientes, 1 error.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -28,6 +29,50 @@ from langgraph.types import Command
 import beamer_graph as bg
 
 PENDIENTES = "pendientes.json"
+COMUN = "comun.md"
+MIN_COMUN = 150          # un párrafo más corto no vale la pena compartirlo
+
+
+def compactar(cuerpos: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Párrafos que se repiten en dos o más tareas de la ronda (reglas, guía, plantillas,
+    esquemas, guion) pasan a un archivo común y cada tarea los cita por id. Solo cambia
+    cómo se transporta el prompt: Claude lee cada bloque una vez en vez de N veces."""
+    partes = [c.split("\n\n") for c in cuerpos]
+    veces: dict[str, int] = {}
+    for ps in partes:
+        for q in set(ps):
+            veces[q] = veces.get(q, 0) + 1
+    comun: dict[str, str] = {}
+    salida = []
+    for ps in partes:
+        nuevas = []
+        for q in ps:
+            if len(q) >= MIN_COMUN and veces[q] > 1:
+                bid = "C" + hashlib.sha1(q.encode()).hexdigest()[:6]
+                comun.setdefault(bid, q)
+                q = f"[bloque común {bid}: está en {COMUN}]"
+            nuevas.append(q)
+        salida.append("\n\n".join(nuevas))
+    return salida, comun
+
+
+def expandir(texto: str, comun: Path) -> str:
+    """Inversa de compactar: la tarea con sus bloques comunes en línea (tests, depuración)."""
+    bloques = dict(re.findall(r"^## (C[0-9a-f]{6})\n\n(.*?)(?=\n\n## C[0-9a-f]{6}\n|\n?\Z)",
+                              comun.read_text(), re.S | re.M)) if comun.exists() else {}
+    return re.sub(r"\[bloque común (C[0-9a-f]{6}): está en [^\]]+\]", lambda m: bloques[m.group(1)], texto)
+
+
+def revision_independiente() -> str:
+    """Quien escribió la diapo no debería verificarla: se delega en un subagente sin contexto.
+    El texto no lleva rutas (están en la cabecera de cada tarea): así va una vez a comun.md."""
+    return ("PARA QUIEN COORDINA (un subagente revisor ignora este párrafo): no hagas tú esta "
+            "revisión, que escribiste la diapositiva. Lanza un subagente (herramienta Agent; puede "
+            "revisar varias tareas, y varios pueden ir en paralelo) y pásale las rutas de las tareas "
+            "con este encargo: «Lee cada tarea y los bloques que cita del archivo de bloques comunes. "
+            "Mira en el paper solo las páginas que indica CONTEXTO (Read con pages) y verifica cada "
+            "afirmación contra esas páginas, no contra lo que recuerdes. Escribe el JSON en el archivo "
+            "de Respuesta de la cabecera». Sin subagentes, hazla tú releyendo esas páginas.")
 
 
 def etiqueta(p: dict) -> str:
@@ -55,7 +100,7 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
     tareas = d / "tareas"
     for f in tareas.glob("*.md"):
         f.unlink()
-    pend = []
+    pend, archivos = [], []
     for n, it in enumerate(interrupts, 1):
         p = it.value
         tag = etiqueta(p)
@@ -85,12 +130,22 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
                 cuerpo += "\n\n---\nResponde SOLO con el contenido pedido (sin explicación ni ```)."
         resp = d / "respuestas" / f"{it.id}.{ext}"
         name = f"{n:02d}_{re.sub(r'[^a-z-]', '', tag.split(' ')[0])}_{it.id[:8]}.md"
-        (tareas / name).write_text(
-            f"# {tag}\n\nRespuesta: `{resp}`\nPaper: `{meta['paper']}` (léelo como imagen si "
-            f"necesitas ver tablas, ecuaciones o figuras)\n\n---\n\n{cuerpo}\n")
+        if tag == "revisar-afirmaciones":
+            cuerpo = revision_independiente() + "\n\n" + cuerpo
+        archivos.append((tareas / name, f"# {tag}\n\nRespuesta: `{resp}`\nPaper: `{meta['paper']}`",
+                         cuerpo))
         pend.append({"id": it.id, "tarea": str(tareas / name), "respuesta": str(resp),
                      "tipo": "guion" if "outline" in p else p["formato"],
                      "esquema": p.get("esquema")})
+    cuerpos, comun = compactar([c for _, _, c in archivos])
+    if comun:
+        (d / COMUN).write_text(
+            "# Bloques comunes de esta ronda\n\nLas tareas los citan por id. Léelos una vez; un "
+            "bloque con el mismo id es idéntico aunque aparezca en otra ronda.\n\n"
+            + "\n\n".join(f"## {bid}\n\n{txt}" for bid, txt in comun.items()) + "\n")
+    for (f, cab, _), cuerpo in zip(archivos, cuerpos):
+        aviso = f"\nBloques comunes: `{d / COMUN}`" if "[bloque común" in cuerpo else ""
+        f.write_text(f"{cab}{aviso}\n\n---\n\n{cuerpo}\n")
     (d / PENDIENTES).write_text(json.dumps(pend, ensure_ascii=False, indent=2))
     return pend
 

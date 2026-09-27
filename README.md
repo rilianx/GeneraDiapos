@@ -258,6 +258,14 @@ hacer en cada paso (leer el paper como imagen, escribir una diapo, revisarla, es
 tu aprobación del guion) viaja en el texto de cada tarea, generado por el grafo.
 `validar.py`, en la misma carpeta, aplica los chequeos a un `.tex` editado a mano.
 
+Como todas las tareas llegan al mismo contexto, el driver no repite texto: los párrafos
+que se repiten en dos o más tareas de una ronda (reglas, guía, plantillas por tipo, guion
+completo, instrucciones del revisor, esquemas JSON) van una vez a `DIR/comun.md` y cada
+tarea los cita por id. En lsmear eso bajó la ronda de diapos de 86 a 31 KB y la de
+revisiones de 57 a 24 KB. Lo propio de cada diapo (contenido, aviso, fuentes, qué mide
+cada tabla) sigue en su tarea. La revisión de afirmaciones pide un subagente sin el
+contexto de quien escribió la diapo, que relee solo las páginas citadas.
+
 ## Configuración
 
 | Qué | Dónde | Notas |
@@ -269,7 +277,7 @@ tu aprobación del guion) viaja en el texto de cada tarea, generado por el grafo
 | Título/autores | `<<TITLE>>`, `<<AUTHORS>>`, `<<VENUE>>` en `base.tex` | se rellenan desde el guion; si los escribes a mano se respetan |
 | Figuras | automático (PDF) | al leer el paper se recortan sus figuras en `<salida>/figuras/figN.png` (desde el pie «Fig. N»/«Figure N»); el guion las cita como `fig*` y el tipo `figure` las inserta con `\includegraphics` |
 | Secciones y agenda | `[estructura]` en `estilo.toml` | `secciones` (orden de la presentación) y `agenda` (diapo con `\tableofcontents`); la portada siempre va primero |
-| Reglas de estilo | `estilo.toml` | `[guia]` va al prompt; `[limites]` se verifica en código |
+| Reglas de estilo | `estilo.toml` | `[guia].texto` va al guion y a cada diapo; `[guia].guion`, solo al guion; `[limites]` se verifica en código |
 | Reintentos, tolerancias, nº de diapos | constantes al inicio de `beamer_graph.py` | `MAX_SLIDE_ATTEMPTS`, `OVERFULL_TOLERANCE_PT`, `N_SLIDES`… |
 | Extracción de PDF | `--extractor marker` | mejor con ecuaciones; requiere `pip install marker-pdf` |
 | Paralelismo | `--concurrency` | bájalo si chocas con límites de tasa de la API |

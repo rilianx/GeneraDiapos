@@ -13,7 +13,9 @@ para el flujo completo y las decisiones de diseño.
   `driver_claude.py` solo transporta tareas y respuestas, no decide pasos.
   En ese modo el nodo `lectura` reemplaza tablas/algoritmos/ecuaciones extraídos por un
   inventario que Claude arma viendo las páginas (validado con `validar_lectura`), y las
-  tareas llevan referencias a páginas (`fuentes_claude`) en vez del texto.
+  tareas llevan referencias a páginas (`fuentes_claude`) en vez del texto. El driver solo
+  compacta el transporte: los párrafos repetidos entre tareas van a `comun.md`
+  (`compactar` / `expandir`), sin cambiar el prompt que arma el grafo.
 - Una diapo que compila nunca se descarta por estilo: queda con aviso.
   Si un refinado posterior rompe la compilación, se usa `best_frame` (la última que compiló).
 - Cada compilación ocurre en su propio directorio temporal, con
@@ -27,7 +29,7 @@ para el flujo completo y las decisiones de diseño.
 - LLM: `_chat`, `call_text`, `call_structured`
 - Extracción: `extract_text`, `chunk_document`, `extraer_figuras` (PNG por figura, fragmentos `fig*`)
 - LaTeX: `preflight`, `compile_tex`, `parse_log`, `lint_frame`, `soft_checks`
-- Estilo: `load_style`, `describe_limits`, `style_check`
+- Estilo: `load_style`, `guia_guion` (reglas solo del guion), `describe_limits`, `style_check`
 - Prompts: `OUTLINE_PROMPT`, `SLIDE_PROMPT`, `REFINE_SLIDE_PROMPT`, `REFINE_GLOBAL_PROMPT`
 - Base: `base_packages`, `base_files`, `base_macros`, `fill_base`, `split_base`, `standalone`
 - Guion: `indice_tablas`, `cargar_guion` (guion revisado desde JSON), `guion_md` (vista para el PR),

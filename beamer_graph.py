@@ -191,7 +191,7 @@ BULLETS_UPGRADE = {"tab": "table", "eq": "equation", "fig": "figure"}
 class SlideSpec(BaseModel):
     title: str
     bullets: list[str]
-    kind: str = Field(description="bullets, columns, block, equation, algorithm o table")
+    kind: str = Field(description="bullets, columns, block, equation, table, figure o algorithm")
     sources: list[str] = Field(default_factory=list,
                                description="IDs de fragmentos que usa la diapo")
     section: str = Field(default="", description="sección de la presentación a la que pertenece")
@@ -668,6 +668,12 @@ def soft_checks(frame: str, context: str) -> list[str]:
 # ----------------------------------------------------------------------------
 # Estilo
 # ----------------------------------------------------------------------------
+def guia_guion(path: str | None) -> str:
+    """Reglas de [guia].guion: solo para el guion (estructura, reparto), no para cada diapo."""
+    p = Path(path or DEFAULT_STYLE)
+    return tomllib.loads(p.read_text()).get("guia", {}).get("guion", "").strip() if p.exists() else ""
+
+
 def load_style(path: str | None) -> tuple[str, dict]:
     p = Path(path or DEFAULT_STYLE)
     if not p.exists():
@@ -677,7 +683,7 @@ def load_style(path: str | None) -> tuple[str, dict]:
         **STYLE_DEFAULTS, **data.get("limites", {}), **data.get("estructura", {})}
 
 
-def describe_limits(lim: dict) -> str:
+def describe_limits(lim: dict, guion: bool = False) -> str:
     out = [f"máximo {lim['max_items']} viñetas", f"máximo {lim['max_palabras_item']} palabras por viñeta",
            f"máximo {lim['max_anidamiento']} niveles de listas",
            f"título de máximo {lim['max_caracteres_titulo']} caracteres",
@@ -688,7 +694,8 @@ def describe_limits(lim: dict) -> str:
         out.append("sin \\color ni \\textcolor")
     if lim["prohibir_vspace_negativo"]:
         out.append("sin \\vspace negativo")
-    out.append(f"máximo {lim['max_fraccion_vinetas']:.0%} de diapositivas solo con viñetas")
+    if guion:                                     # regla del conjunto, no de una diapo
+        out.append(f"máximo {lim['max_fraccion_vinetas']:.0%} de diapositivas solo con viñetas")
     out.append(f"máximo {lim['max_bloques']} bloques por diapositiva")
     if lim["prohibir_alert_en_alertblock"]:
         out.append("sin \\alert dentro de alertblock")
@@ -868,8 +875,9 @@ Ejemplo de formato para este tipo (solo la estructura; el contenido es inventado
 {kind_example}
 Puedes combinar con un alertblock o exampleblock para el mensaje clave si cabe.
 
-Lugar en la presentación (sección: {section}). Guion completo, esta diapo marcada con →; \
-no repitas lo que cubren las otras:
+Lugar en la presentación: esta es la diapo {num} (sección: {section}). No repitas lo que \
+cubren las demás diapos del guion completo:
+
 {plan}
 
 Título: {title}
@@ -1028,9 +1036,21 @@ def indice_tablas(chunks: dict[str, str]) -> str:
             out.append(f"[{cid}] {head} (dañada: sin contenido)")
             continue
         rows = [l for l in lines[1:] if l.startswith("|") and not re.fullmatch(r"[|\-: ]+", l)]
+        if len(lines) > 1 and lines[1].startswith("Encabezados:"):   # inventario de la lectura
+            out.append(f"[{cid}] {head}\n    " + "\n    ".join(lines[1:3]))
+            continue
         cols = " / ".join(r[:160] for r in rows[:2]) or " ".join(lines[1:3])[:300]
         out.append(f"[{cid}] {head}\n    encabezados: {cols}")
     return "\n".join(out) or "(el paper no tiene tablas)"
+
+
+def pie_corto(caption: str, n: int = 300) -> str:
+    """Pie de figura sin el rótulo «Fig. N», cortado en el fin de una frase (o de una palabra)."""
+    t = re.sub(r"^(?:Fig\.?|Figure)\s*\d+\s*[.:|]?\s*", "", caption.strip())
+    if len(t) <= n:
+        return t
+    corte = t.rfind(". ", 0, n)
+    return t[:corte + 1] if corte > 40 else t[:t.rfind(" ", 0, n)] + "…"
 
 
 def ingest(state: State) -> dict:
@@ -1044,7 +1064,7 @@ def ingest(state: State) -> dict:
     if path.suffix == ".pdf":
         dest = (Path(state["out_dir"]) if state.get("out_dir") else Path(tempfile.mkdtemp())) / "figuras"
         for n, f in extraer_figuras(path, dest).items():
-            chunks[f"fig{n}"] = (f"Figure {n} (pág. {f['pagina']}): {f['caption'][:300]}\n"
+            chunks[f"fig{n}"] = (f"Figure {n} (pág. {f['pagina']}): {pie_corto(f['caption'])}\n"
                                  f"[archivo: {f['archivo']}]")
         out["figuras_dir"] = str(dest)
     return out
@@ -1119,11 +1139,9 @@ def lectura(state: State) -> dict:
     for t in le.tablas:
         out[f"tab{t.numero}"] = (f"Table {t.numero} (pág. {t.pagina}): {t.titulo}\n"
                                  f"Encabezados: {' | '.join(t.encabezados)}\n"
-                                 f"Compara: {', '.join(t.metodos)}\nMide: {t.que_mide}\n"
-                                 f"[Contenido: míralo en la página {t.pagina} del paper]")
+                                 f"Compara: {', '.join(t.metodos)}\nMide: {t.que_mide}")
     for e in le.algoritmos + le.ecuaciones:
-        out[e.id] = (f"{e.titulo} (pág. {e.pagina})" + (f"\n{e.latex}" if e.latex else "")
-                     + f"\n[míralo en la página {e.pagina} del paper]")
+        out[e.id] = f"{e.titulo} (pág. {e.pagina})" + (f"\n{e.latex}" if e.latex else "")
     return {"chunks": out}
 
 
@@ -1198,7 +1216,8 @@ def outline(state: State) -> dict:
             kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
             secciones=", ".join(lim.get("secciones") or ["(libre)"]),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
-            macros=base_macros(base), guide=guide or "-", limits=describe_limits(lim)))
+            macros=base_macros(base), guide="\n".join(filter(None, [guide, guia_guion(state.get("style_path"))])) or "-",
+            limits=describe_limits(lim, guion=True)))
         o = asegurar_portada(ajustar_kinds(o, chunks), lim)
         errs = validate_outline(o, chunks, lim)
         soft = variedad_outline(o, lim)
@@ -1377,8 +1396,9 @@ def review_outline(state: State) -> dict:
     return {}
 
 
-def plan_guion(slides: list[dict], idx: int) -> str:
-    """Títulos del guion por sección, con la diapo idx marcada: evita repetir a las vecinas."""
+def plan_guion(slides: list[dict]) -> str:
+    """Títulos del guion por sección: evita repetir a las vecinas. Es igual para todas las
+    diapos (cada prompt dice cuál es la suya), así el modo claude lo comparte una sola vez."""
     out, sec = [], None
     for i, sl in enumerate(slides):
         if sl["kind"] in FIXED_KINDS:
@@ -1386,7 +1406,7 @@ def plan_guion(slides: list[dict], idx: int) -> str:
         if (sl.get("section") or "") != sec:
             sec = sl.get("section") or ""
             out.append(f"[{sec or '-'}]")
-        out.append(f"{'→' if i == idx else ' '} {i}. {sl['title']}")
+        out.append(f"  {i}. {sl['title']}")
     return "\n".join(out)
 
 
@@ -1402,7 +1422,7 @@ def fan_out(state: State) -> list[Send]:
         "context_cifras": state.get("texto", "") if PROVIDER == "claude" else "",
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
         "figuras_dir": state.get("figuras_dir", ""),
-        "tables": indice_tablas(chunks), "plan": plan_guion(o["slides"], i),
+        "tables": indice_tablas(chunks), "plan": plan_guion(o["slides"]),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
         "warnings": [],
     }) for i, s in enumerate(o["slides"])]
@@ -1498,7 +1518,7 @@ def write_slide(s: SlideState) -> dict:
         limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"],
         kind_desc=KINDS[spec["kind"]][0], kind_example=KINDS[spec["kind"]][1], title=spec["title"],
         bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"],
-        section=spec.get("section") or "-", plan=s.get("plan") or "-",
+        section=spec.get("section") or "-", plan=s.get("plan") or "-", num=s["idx"],
         aviso=(f"Aviso del guion (tenlo en cuenta al elegir las cifras): {spec['aviso']}\n"
                if spec.get("aviso") else "")))
     return {"frame": frame}

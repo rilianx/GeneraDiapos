@@ -11,7 +11,8 @@ python beamer_graph.py papers/<nombre>.pdf --claude trabajo/<nombre> --out prese
 ```
 
 Luego, hasta que diga «Listo»:
-1. Lee cada archivo de `trabajo/<nombre>/tareas/` y escribe la respuesta donde indica.
+1. Lee cada archivo de `trabajo/<nombre>/tareas/` (y una vez `trabajo/<nombre>/comun.md`,
+   con los bloques que citan) y escribe la respuesta donde indica.
 2. `python beamer_graph.py --claude trabajo/<nombre>`
 
 Si una respuesta no valida, el comando lo dice: corrige ese archivo y vuelve a ejecutarlo.
