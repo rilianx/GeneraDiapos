@@ -1,0 +1,192 @@
+{
+  "title": "lsmear: selección de variables con multiplicadores de Lagrange",
+  "authors": "Ignacio Araya \\and Bertrand Neveu",
+  "venue": "J Glob Optim (2017)",
+  "notation": "\\small\n\\begin{itemize}\n  \\item $\\mathbf{x}$: box actual de variables.\n  \\item $x_i$: variable $i$-ésima; $\\mathrm{wid}(x_i)$ su ancho.\n  \\item $f$: función objetivo; $g_j$: restricción $j$-ésima.\n  \\item $\\mathbf{J}$: Jacobiano intervalar de las restricciones.\n  \\item $\\lambda^*$: multiplicadores duales óptimos de la linealización.\n  \\item $L$: Lagrangiana usada para puntuar la variable.\n\\end{itemize}",
+  "slides": [
+    {
+      "title": "lsmear mejora el bisecado de intervalos",
+      "bullets": [
+        "Optimiza la selección de variables en branch and bound intervalar.",
+        "Usa información local de derivadas y tamaño de dominios.",
+        "Pondera restricciones mediante multiplicadores duales óptimos.",
+        "Busca reducir nodos tratados y tiempo total.",
+        "Se evalúa en instancias NCOP de referencia."
+      ],
+      "kind": "title",
+      "sources": []
+    },
+    {
+      "title": "La selección de variables domina el costo",
+      "bullets": [
+        "El solver resuelve problemas globales continuos de forma determinista.",
+        "Cada bisección divide el box actual en subproblemas.",
+        "La elección de $x_i$ afecta poda y profundidad del árbol.",
+        "Una mala regla puede disparar el número de nodos.",
+        "El objetivo es hallar una estrategia informada y barata."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec3",
+        "sec4",
+        "sec5"
+      ]
+    },
+    {
+      "title": "Las reglas clásicas tratan todas las restricciones igual",
+      "bullets": [
+        "\\texttt{rr} ignora la estructura del sistema.",
+        "\\texttt{lf} solo mira el ancho del dominio.",
+        "\\texttt{smax}, \\texttt{ssum} y \\texttt{ssr} agregan valores de smear.",
+        "Todas pesan por igual restricciones activas e inactivas.",
+        "Esa uniformidad limita su capacidad de priorizar impacto."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec3",
+        "sec2"
+      ]
+    },
+    {
+      "title": "\\texttt{ViolationTransfer} guía la elección, pero es intrusivo",
+      "bullets": [
+        "Usa multiplicadores duales de una relajación convexa.",
+        "Mide impacto sobre la función lagrangiana relajada.",
+        "Requiere reformular el problema y modificar el contractor.",
+        "La elección queda fijada antes de rebisecar el nodo.",
+        "Es más complejo que una linealización simple."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec3",
+        "sec7",
+        "sec8",
+        "alg3"
+      ]
+    },
+    {
+      "title": "lsmear pondera las restricciones antes de medir smear",
+      "bullets": [
+        "Linealiza cada restricción alrededor del punto medio del box.",
+        "Resuelve un LP para obtener \\(\\lambda^*\\).",
+        "Construye una Lagrangiana con esos pesos duales.",
+        "Mide el impacto de cada variable sobre esa Lagrangiana.",
+        "Así favorece restricciones más relevantes en el nodo."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec6",
+        "sec7",
+        "alg3"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear} elige la variable con mayor impacto",
+      "bullets": [
+        "La linealización usa el término de primer orden de Taylor.",
+        "Si el LP falla o es no acotado, cae en \\texttt{smearsum}.",
+        "El impacto combina \\(\\lambda_i^*\\), derivadas intervalares y \\(\\mathrm{wid}(x_i)\\).",
+        "Se bisecciona la variable de impacto máximo.",
+        "La implementación base no altera el contractor del solver."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "alg2",
+        "alg3",
+        "sec7"
+      ]
+    },
+    {
+      "title": "Las pruebas usan \\texttt{IbexOpt} y COCONUT",
+      "bullets": [
+        "Se implementan \\texttt{lsmear} y variantes en \\texttt{IbexOpt}.",
+        "Se usan \\texttt{HC4}, \\texttt{ACID(HC4)}, \\texttt{AF2}, \\texttt{XNewton}, \\texttt{inHC4} e \\texttt{InnerPolytope}.",
+        "La búsqueda de nodos usa \\texttt{FeasibleDiving}.",
+        "\\(\\epsilon=10^{-6}\\), cinco corridas por instancia, y promedio robusto.",
+        "Se evalúan 76 instancias de COCONUT."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec9",
+        "sec10"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear} supera a las reglas clásicas",
+      "bullets": [
+        "\\texttt{lsmear} domina a \\texttt{rr}, \\texttt{lf}, \\texttt{smax}, \\texttt{ssum} y \\texttt{ssr}.",
+        "Casi 90\\% de instancias quedan bajo dos veces el mejor tiempo.",
+        "El mejor promedio relativo frente a \\texttt{ssum} es 1.30.",
+        "\\alert{\\texttt{lsmear} logra el mejor equilibrio entre tiempo y nodos.}",
+        "El overhead del LP es pequeño frente al filtrado."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec10",
+        "tab1"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear-MG} y \\texttt{lsmear-LR} lideran las variantes",
+      "bullets": [
+        "\\texttt{lsmear-MG} usa gradiente en el punto medio.",
+        "\\texttt{lsmear-LI} y \\texttt{lsmear-LRI} usan relajación lineal.",
+        "\\texttt{lsmear-MG} obtiene el mejor promedio global.",
+        "\\texttt{lsmear-LRI} y \\texttt{lsmear-LI} quedan rezagadas.",
+        "La variante simple gana sin modificar el contractor."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec8",
+        "sec11",
+        "tab3"
+      ]
+    },
+    {
+      "title": "La búsqueda por FeasibleDiving potencia el método",
+      "bullets": [
+        "\\texttt{FeasibleDiving} supera a \\texttt{minLB} con cualquier selector.",
+        "\\texttt{lsmear-MG} sigue siendo mejor bajo ambas búsquedas.",
+        "Con \\texttt{minLB}, \\texttt{lsmear-MG} mejora a \\texttt{ssum} por 1.63.",
+        "Con \\texttt{FeasibleDiving}, la mejora sigue siendo 1.43.",
+        "La elección de nodos y variables se refuerzan mutuamente."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec12",
+        "tab4"
+      ]
+    },
+    {
+      "title": "La idea central es ponderar, no solo medir",
+      "bullets": [
+        "Las restricciones activas merecen más peso que las inactivas.",
+        "La linealización ofrece pesos baratos y generalizables.",
+        "\\texttt{lsmear-MG} conserva la simplicidad de implementación.",
+        "La ganancia proviene de priorizar información relevante.",
+        "El enfoque evita depender de una relajación convexa compleja."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec2",
+        "sec7",
+        "sec8",
+        "sec13"
+      ]
+    },
+    {
+      "title": "El siguiente paso es incorporar violación de restricciones",
+      "bullets": [
+        "Integrar el criterio de violación de \\texttt{ViolationTransfer}.",
+        "Ignorar variables ligadas solo a restricciones lineales.",
+        "Mantener posibles efectos indirectos sobre variables no lineales.",
+        "Explorar una combinación más fina de pesos e impacto.",
+        "Extender la idea a otros solvers intervalares."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec13"
+      ]
+    }
+  ]
+}

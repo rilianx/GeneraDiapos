@@ -1,0 +1,152 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+
+% Macros disponibles para el modelo: se detectan automáticamente y se le
+% informan en cada diapositiva. Agrega aquí las que necesite cada paper.
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% lsmear: selección de variables con multiplicadores de Lagrange, Ignacio Araya \and Bertrand Neveu y J Glob Optim (2017) se rellenan desde el guion.
+% Si los reemplazas a mano, se respetan tal cual.
+\title{lsmear: selección de variables con multiplicadores de Lagrange}
+\subtitle{J Glob Optim (2017)}
+\author{Ignacio Araya \and Bertrand Neveu}
+\date{}
+
+\begin{document}
+
+\begin{frame}[plain]
+\titlepage
+\end{frame}
+
+\begin{frame}{La selección de variables domina el costo}
+\small
+\begin{itemize}
+  \item El solver resuelve problemas globales continuos de forma determinista.
+  \item Cada bisección divide el box actual en dos subproblemas.
+  \item La elección de $x_i$ afecta poda y profundidad del árbol.
+  \item Una mala regla puede disparar el número de nodos.
+  \item El objetivo es una estrategia \alert{informada y barata}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Las reglas clásicas tratan todas las restricciones igual}
+\small
+\begin{itemize}
+  \item \texttt{rr} ignora la estructura del sistema; \texttt{lf} solo mira el ancho del dominio.
+  \item \texttt{smax}, \texttt{ssum} y \texttt{ssr} agregan smear sobre todas las restricciones.
+  \item Todas pesan por igual restricciones activas e inactivas.
+  \item \alert{Esa uniformidad limita su capacidad de priorizar impacto.}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{ViolationTransfer} guía la elección, pero es intrusivo}
+\small
+\begin{itemize}
+  \item Usa multiplicadores duales de una relajación convexa.
+  \item Pondera la importancia con la función lagrangiana relajada.
+  \item Requiere reformular el problema y modificar el contractor.
+  \item La variable se fija antes de rebisecar el nodo.
+  \item \alert{Es más complejo que una linealización simple.}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{lsmear pondera las restricciones antes de medir smear}
+\small
+\begin{itemize}
+  \item Linealiza cada restricción alrededor del punto medio del box actual.
+  \item Resuelve un LP para obtener los multiplicadores duales óptimos $\lambda^*$.
+  \item Construye una \textbf{Lagrangiana} con esos pesos y mide el impacto de cada variable.
+  \item Usa el Jacobiano intervalar para estimar el efecto de $\mathbf{x}$ sobre $L$.
+  \item \alert{Así favorece las restricciones más relevantes al decidir qué variable bisecar.}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} elige la variable con mayor impacto}
+\small
+\begin{itemize}
+  \item \texttt{lsmear} linealiza con el término de primer orden de Taylor en el punto medio de \(\mathbf{x}\).
+  \item El LP añade cotas; si falla o es no acotado, cae en \texttt{smearsum}.
+  \item \textbf{Impacto} de \(x_i\): \(\,|D_i\,\mathrm{wid}(x_i)|\), con \(D_i\) usando \(\lambda^*\) y \(\mathbf{J}\).
+  \item Para cada variable, se acumulan derivadas intervalares de restricciones ponderadas por multiplicadores duales óptimos.
+  \item Se bisecciona la variable con impacto máximo y la implementación base no altera el contractor.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Las pruebas usan \texttt{IbexOpt} y COCONUT}
+\small
+\begin{itemize}
+  \item Implementamos \texttt{lsmear} y sus variantes en \texttt{IbexOpt}, sobre \texttt{Ibex}.
+  \item \texttt{IbexOpt} usa \texttt{HC4}, \texttt{ACID(HC4)}, \texttt{AF2}, \texttt{XNewton}, \texttt{inHC4} e \texttt{InnerPolytope}.
+  \item La selección del siguiente nodo se hace con \texttt{FeasibleDiving}.
+  \item \alert{Se evaluaron 76 instancias} de las series 1 y 2 de \texttt{COCONUT}.
+  \item Se fijó \(\epsilon=10^{-6}\), con cinco corridas por instancia y promedio robusto.
+  \item Se comparó el desempeño en tiempo de CPU y tamaño del árbol de búsqueda.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} supera a las reglas clásicas}
+\small
+\begin{itemize}
+  \item Se comparó \texttt{lsmear} con \texttt{rr}, \texttt{lf}, \texttt{smax}, \texttt{ssum} y \texttt{ssr}.
+  \item \texttt{lsmear} domina en tiempo y nodos; \texttt{lf} da los peores resultados.
+  \item Casi 90\% de instancias quedan bajo dos veces el mejor tiempo.
+  \item El mejor promedio relativo frente a \texttt{ssum} es 1.30.
+  \item \alert{\texttt{lsmear} logra el mejor equilibrio entre tiempo y nodos.}
+  \item El LP añade sobrecarga pequeña frente al filtrado, que ya resuelve hasta $2n$ LPs.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} y \texttt{lsmear-LR} lideran las variantes}
+\small
+\begin{itemize}
+  \item \texttt{lsmear-MG} calcula la linealización con el gradiente en el punto medio de la caja.
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} usan la relajación lineal para ponderar el impacto.
+  \item \alert{\texttt{lsmear-MG} obtiene el mejor promedio global y \texttt{lsmear-LR} queda muy cerca.}
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} quedan rezagadas frente a las otras variantes.
+  \item La variante simple \texttt{lsmear-MG} gana sin modificar el contractor del solver.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{La búsqueda por \texttt{FeasibleDiving} potencia el método}
+\small
+\begin{itemize}
+  \item \texttt{FeasibleDiving} supera a \texttt{minLB} con cualquier selector de variables.
+  \item \texttt{lsmear-MG} sigue siendo el mejor bajo ambas búsquedas.
+  \item Con \texttt{minLB}, \texttt{lsmear-MG} mejora a \texttt{ssum} por 1.63.
+  \item Con \texttt{FeasibleDiving}, la mejora se mantiene en 1.43.
+  \item La elección de nodos y variables se refuerzan mutuamente.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{La idea central es ponderar, no solo medir}
+\small
+\begin{itemize}
+  \item Las restricciones activas merecen más peso que las inactivas.
+  \item La linealización da pesos baratos y generalizables.
+  \item \texttt{lsmear-MG} conserva la simplicidad de implementación.
+  \item \alert{La ganancia viene de priorizar información relevante.}
+  \item Evita depender de una relajación convexa compleja.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{El siguiente paso es incorporar violación de restricciones}
+\small
+\begin{itemize}
+  \item Integrar el criterio de violación de \texttt{ViolationTransfer} en la selección de variables.
+  \item Ignorar variables ligadas \textbf{solo} a restricciones lineales, porque ya se reducen bien.
+  \item Mantener el efecto indirecto sobre variables no lineales al explorar particiones alternativas.
+  \item Afinar la combinación entre pesos, violación e impacto para priorizar mejor cada variable.
+  \item Extender esta idea a otros \texttt{solvers} intervalares, preservando independencia del contractor.
+\end{itemize}
+\end{frame}
+
+\end{document}
