@@ -60,6 +60,7 @@ assert bg.restaurar_escapes({"t": ["\texttt{x} \frac{a}{b} \beta \rho \neq 0"]})
     {"t": [r"\texttt{x} \frac{a}{b} \beta \rho \neq 0"]}
 assert bg.restaurar_escapes("a\n  \\item b") == "a\n  \\item b"   # saltos reales intactos
 assert bg.restaurar_escapes("sistem\x00e1ticamente") == "sistemáticamente"
+assert bg.restaurar_escapes(r"\\texttt{a} y \\\\ b") == r"\texttt{a} y \\\\ b"   # solo antes de letras
 
 bg.call_structured, bg.call_text = fake_structured, fake_text
 
@@ -140,6 +141,26 @@ st = {"idx": 1, "frame": "roto", "best_frame": ok_frame, "errors": ["Error X"], 
       "limits": bg.STYLE_DEFAULTS, "context": "", "attempts": 3}
 _, frame, status, _, warns = bg.finish_slide(st)["frames"][0]
 assert status == "ok" and frame == ok_frame and "última versión que compilaba" in warns[0]
+
+# Guion revisado por una persona: se carga desde JSON sin llamar al modelo
+g = tmp / "guion.json"
+g.write_text(json.dumps({"paper": "paper.tex", **res["outline"]}))
+n_calls = calls["review"]
+st = {"chunks": res["chunks"], "outline_path": str(g)}
+assert bg.outline(st)["outline"]["slides"] == res["outline"]["slides"]
+md = bg.guion_md(res["outline"], res["chunks"], "paper.tex")
+assert "Resultados" in md and "`bullets`" in md
+g.write_text(json.dumps({**res["outline"], "slides": [{"title": "x", "bullets": [], "kind": "bullets",
+                                                       "sources": ["nope"]}]}))
+try:
+    bg.outline(st)
+    raise AssertionError("un guion con fuentes inexistentes debía rechazarse")
+except RuntimeError:
+    pass
+
+# El índice de tablas llega al revisor con título y encabezados
+idx = bg.indice_tablas(c)
+assert "[tab2] Table 2: Tiempos por variante." in idx and "|Método|t|" in idx and "dañada" in idx
 
 # Consumo de tokens: se acumula por modelo y aparece en el informe
 class _Msg:

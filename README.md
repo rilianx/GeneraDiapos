@@ -82,13 +82,26 @@ Con `--review` el pipeline se detiene tras el guion, lo guarda en
 
 ### 4. Uso diario en GitHub
 
-- Sube un paper a `papers/` en `main` → se ejecuta `generar.yml` → llega un PR
-  con `presentaciones/<nombre>/` (`presentacion.tex`, `.pdf`, `outline.json`,
-  `informe.md`). El PDF también queda en los artefactos del run.
-- O lánzalo a mano: **Actions → generar presentacion → Run workflow** e indica
-  la ruta del paper.
-- Revisa `informe.md` antes de aprobar: dice qué diapos fallaron, cuántos
-  intentos necesitaron y qué cifras conviene verificar.
+Por defecto hay **revisión humana del guion** (el paso más barato de corregir):
+
+1. Sube un paper a `papers/` en `main` → llega un PR **"Guion para revisar"** con
+   `guiones/<nombre>.json` y una vista legible `guiones/<nombre>.md`.
+2. Revisa el orden, el tipo de cada diapo y sobre todo qué fragmentos usa cada una
+   (`sources`; las tablas del paper están listadas al inicio del `.md`). Si algo está
+   mal, edita el `.json` en el mismo PR.
+3. Fusiona el PR → se generan las diapositivas desde ese guion y llega un segundo PR
+   con `presentaciones/<nombre>/` (`presentacion.tex`, `.pdf`, `outline.json`,
+   `informe.md`). El PDF también queda en los artefactos del run.
+4. Revisa `informe.md` antes de aprobar: estado de cada diapo, intentos, avisos del
+   revisor de afirmaciones, de estilo y cifras a verificar.
+
+Para generar todo de una vez: variable del repo `REVISAR_GUION=false`, o
+**Actions → generar presentacion → Run workflow** con modo `completo`. Desde ahí
+también puedes lanzar solo el guion (modo `guion`) o las diapos desde un guion ya
+revisado (campo `guion`).
+
+En local lo equivalente es `--solo-guion guiones/x.json` y luego `--guion guiones/x.json`
+(o `--review`, que pausa en la terminal).
 
 ## Configuración
 

@@ -215,6 +215,7 @@ class State(TypedDict, total=False):
     base_path: str
     style_path: str
     out_dir: str
+    outline_path: str       # guion ya revisado: se usa en vez de generarlo
     extractor: str
     human_review: bool
     chunks: dict[str, str]
@@ -239,6 +240,7 @@ class SlideState(TypedDict, total=False):
     style_guide: str
     limits: dict
     damaged: list[str]      # tablas citadas que la extracción dejó dañadas
+    tables: str             # índice de todas las tablas (título y encabezados)
     style_errors: list[str]
     fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
     reviews: int            # revisiones hechas (presupuesto propio, no gasta attempts)
@@ -314,6 +316,8 @@ def restaurar_escapes(obj):
         # a veces el modelo emite \u0000 + hex en vez del carácter (á → "\0e1")
         obj = re.sub("\x00([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), obj)
         obj = _NEWLINE_CMD.sub(lambda _: "\\n", obj)
+        # y otras veces escapa de más: "\\\\texttt" (salto de línea + texto) → "\\texttt"
+        obj = re.sub(r"\\\\(?=[A-Za-z])", lambda _: "\\", obj)
         return "".join(_CONTROL.get(c, c) for c in obj)
     if isinstance(obj, list):
         return [restaurar_escapes(x) for x in obj]
@@ -780,8 +784,16 @@ método o métrica equivocada, trabajo futuro presentado como hecho, comparació
 En evidencia cita textualmente el pasaje de la fuente (para contradicha es obligatorio).
 Ante la duda, respaldada: un falso positivo cuesta un refinado innecesario.
 
+Usa el ÍNDICE DE TABLAS (todas las tablas del paper, con sus encabezados) para comprobar que \
+cada cifra de una tabla o comparación corresponde a los métodos y métricas correctos: si una \
+cifra viene de una tabla sobre otros métodos (p. ej. variantes en vez de estrategias \
+clásicas), es contradicha.
+
 DIAPOSITIVA:
 {frame}
+
+ÍNDICE DE TABLAS:
+{tables}
 
 CONTEXTO:
 {context}"""
@@ -855,6 +867,23 @@ def load_base(state: State) -> str:
 # ----------------------------------------------------------------------------
 # Nodos del grafo principal
 # ----------------------------------------------------------------------------
+def indice_tablas(chunks: dict[str, str]) -> str:
+    """Título y encabezados de cada tabla: permite notar cifras atribuidas a otra tabla."""
+    out = []
+    for cid, txt in chunks.items():
+        if not cid.startswith("tab"):
+            continue
+        lines = [l for l in txt.splitlines() if l.strip()]
+        head = lines[0][:200] if lines else ""
+        if TABLA_DANADA in txt:
+            out.append(f"[{cid}] {head} (dañada: sin contenido)")
+            continue
+        rows = [l for l in lines[1:] if l.startswith("|") and not re.fullmatch(r"[|\-: ]+", l)]
+        cols = " / ".join(r[:160] for r in rows[:2]) or " ".join(lines[1:3])[:300]
+        out.append(f"[{cid}] {head}\n    encabezados: {cols}")
+    return "\n".join(out) or "(el paper no tiene tablas)"
+
+
 def ingest(state: State) -> dict:
     preflight(load_base(state))
     text, fmt = extract_text(Path(state["source_path"]), state.get("extractor", "pymupdf"))
@@ -907,6 +936,8 @@ def variedad_outline(o: Outline, lim: dict) -> list[str]:
 
 def outline(state: State) -> dict:
     chunks = state["chunks"]
+    if state.get("outline_path"):                    # guion revisado por una persona
+        return cargar_guion(state, json.loads(Path(state["outline_path"]).read_text()))
     listing = "\n\n".join(f"[{cid}]\n{txt}" for cid, txt in chunks.items())
     base = load_base(state)
     guide, lim = load_style(state.get("style_path"))
@@ -929,19 +960,40 @@ def outline(state: State) -> dict:
     raise RuntimeError(f"Outline inválido tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
 
 
+def cargar_guion(state: State, data: dict) -> dict:
+    o = ajustar_kinds(Outline.model_validate(data), state["chunks"])
+    errs = validate_outline(o, state["chunks"], load_style(state.get("style_path"))[1])
+    if errs:
+        raise RuntimeError(f"El guion editado no es válido: {errs}")
+    d = o.model_dump()
+    head, tail = split_base(load_base(state), d)
+    return {"outline": d, "head": head, "tail": tail}
+
+
+def guion_md(outline: dict, chunks: dict, paper: str) -> str:
+    """Vista legible del guion para revisarlo en un PR (lo que se edita es el .json)."""
+    titles = {c: chunks[c].splitlines()[0] for c in chunks if c.startswith("tab")}
+    out = [f"# Guion: {outline['title']}\n", f"Paper: `{paper}`\n",
+           "Revisa el orden, el tipo de cada diapo y sobre todo **qué fragmentos usa** "
+           "(`sources`). Para cambiar algo edita el `.json` de este PR; al fusionarlo se "
+           "generan las diapositivas.\n", "## Tablas del paper\n"]
+    out += [f"- `{c}`: {t}" for c, t in titles.items()] or ["- (ninguna)"]
+    out.append("")
+    for i, sl in enumerate(outline["slides"]):
+        out.append(f"## {i}. {sl['title']}  \n`{sl['kind']}` · fuentes: "
+                   f"{', '.join(f'`{c}`' for c in sl['sources']) or '-'}\n")
+        out += [f"- {b}" for b in sl["bullets"]]
+        out.append("")
+    return "\n".join(out)
+
+
 def review_outline(state: State) -> dict:
     """Punto de revisión humana: el guion es lo más barato de corregir."""
     if not state.get("human_review"):
         return {}
     edited = interrupt({"outline": state["outline"]})
     if isinstance(edited, dict) and edited.get("slides"):
-        o = Outline.model_validate(edited)
-        errs = validate_outline(o, state["chunks"], load_style(state.get("style_path"))[1])
-        if errs:
-            raise RuntimeError(f"El guion editado no es válido: {errs}")
-        d = o.model_dump()
-        head, tail = split_base(load_base(state), d)
-        return {"outline": d, "head": head, "tail": tail}
+        return cargar_guion(state, edited)
     return {}
 
 
@@ -954,6 +1006,7 @@ def fan_out(state: State) -> list[Send]:
         "idx": i, "spec": s, "head": state["head"], "notation": o["notation"],
         "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": "\n\n".join(chunks[c] for c in s["sources"]),
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
+        "tables": indice_tablas(chunks),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
         "warnings": [],
     }) for i, s in enumerate(o["slides"])]
@@ -1068,7 +1121,8 @@ def route_slide(s: SlideState) -> str:
 
 def review_slide(s: SlideState) -> dict:
     r = call_structured(MODEL_REVIEW, Review, effort=REASONING_REVIEW,
-                        prompt=REVIEW_SLIDE_PROMPT.format(frame=s["frame"], context=s["context"]))
+                        prompt=REVIEW_SLIDE_PROMPT.format(frame=s["frame"], context=s["context"],
+                                                          tables=s.get("tables", "-")))
     bad = [f"{c.veredicto}: «{c.afirmacion}» ({c.evidencia})"
            for c in r.claims if c.veredicto in ("no_respaldada", "contradicha")]
     return {"fact_errors": bad, "reviews": s.get("reviews", 0) + 1}
@@ -1161,19 +1215,39 @@ def build_graph(checkpointer=None):
 # ----------------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("source", help="paper en .pdf, .tex o .md")
+    ap.add_argument("source", nargs="?", help="paper en .pdf, .tex o .md (con --guion, opcional)")
     ap.add_argument("--out", default="salida")
     ap.add_argument("--base", default=str(DEFAULT_BASE), help="plantilla con %%SLIDES%%")
     ap.add_argument("--estilo", default=str(DEFAULT_STYLE), help="reglas de estilo (TOML)")
     ap.add_argument("--review", action="store_true", help="pausar para revisar el guion")
     ap.add_argument("--extractor", choices=["pymupdf", "marker"], default="pymupdf")
     ap.add_argument("--concurrency", type=int, default=4, help="diapos en paralelo")
+    ap.add_argument("--solo-guion", metavar="JSON",
+                    help="solo genera el guion y lo guarda en JSON (y una vista .md) para revisarlo")
+    ap.add_argument("--guion", metavar="JSON", help="genera las diapos desde un guion ya revisado")
     args = ap.parse_args()
+    guion = json.loads(Path(args.guion).read_text()) if args.guion else {}
+    args.source = args.source or guion.get("paper")
+    if not args.source:
+        ap.error("falta el paper (o un --guion que lo indique en su campo 'paper')")
+
+    if args.solo_guion:
+        state = {"source_path": args.source, "base_path": args.base, "style_path": args.estilo,
+                 "extractor": args.extractor}
+        state.update(ingest(state))
+        o = outline(state)["outline"]
+        path = Path(args.solo_guion)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"paper": args.source, **o}, ensure_ascii=False, indent=2))
+        path.with_suffix(".md").write_text(guion_md(o, state["chunks"], args.source))
+        print("\n".join(informe_uso()))
+        print(f"Guion: {path} (vista: {path.with_suffix('.md')})")
+        return
 
     graph = build_graph()
     config = {"configurable": {"thread_id": "beamer"}, "max_concurrency": args.concurrency}
     result = graph.invoke({"source_path": args.source, "base_path": args.base, "style_path": args.estilo,
-                           "out_dir": args.out,
+                           "out_dir": args.out, **({"outline_path": args.guion} if args.guion else {}),
                            "extractor": args.extractor, "human_review": args.review}, config)
 
     while "__interrupt__" in result:
