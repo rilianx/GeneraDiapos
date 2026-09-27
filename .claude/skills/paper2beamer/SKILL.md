@@ -5,6 +5,7 @@ description: Genera una presentación LaTeX Beamer a partir de un paper (.pdf, .
 
 El pipeline (`beamer_graph.py`) decide los pasos y valida; tú solo respondes las
 tareas que deja. Todo lo que necesitas para cada una está en su archivo.
+Usa `.venv/bin/python` si existe (dependencias en un entorno virtual); si no, `python`.
 
 ```bash
 python beamer_graph.py papers/<nombre>.pdf --claude trabajo/<nombre> --out presentaciones/<nombre> --review

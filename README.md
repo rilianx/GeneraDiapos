@@ -252,7 +252,10 @@ python beamer_graph.py papers/x.pdf --claude trabajo/x --out presentaciones/x --
 python beamer_graph.py --claude trabajo/x      # repetir hasta que diga "Listo"
 ```
 
-En Claude Code basta con pedir "haz la presentación de papers/x.pdf": la skill
+En Claude Code (terminal, escritorio o la extensión de VS Code, abierto en la carpeta del
+repo) basta con pedir "haz la presentación de papers/x.pdf" o usar `/paper2beamer`. En
+Claude Code en la web, `.claude/hooks/session-start.sh` instala TeX Live y las dependencias
+al iniciar cada sesión; en local hay que instalarlas una vez (paso 1). La skill
 `.claude/skills/paper2beamer/` es mínima: solo explica el ciclo, porque lo que hay que
 hacer en cada paso (leer el paper como imagen, escribir una diapo, revisarla, esperar
 tu aprobación del guion) viaja en el texto de cada tarea, generado por el grafo.
