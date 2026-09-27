@@ -10,6 +10,7 @@ para el flujo completo y las decisiones de diseño.
 - Toda llamada a un LLM pasa por `call_text` o `call_structured`. Así el smoke
   test puede simularlas y el proveedor se cambia en un solo lugar (`_chat`).
 - Una diapo que compila nunca se descarta por estilo: queda con aviso.
+  Si un refinado posterior rompe la compilación, se usa `best_frame` (la última que compiló).
 - Cada compilación ocurre en su propio directorio temporal, con
   `-no-shell-escape` y timeout.
 - La configuración del usuario vive en `base.tex`, `estilo.toml` y variables de
@@ -26,7 +27,8 @@ para el flujo completo y las decisiones de diseño.
 - Base: `base_packages`, `base_files`, `base_macros`, `fill_base`, `split_base`, `standalone`
 - Nodos principales: `ingest`, `outline`, `review_outline`, `fan_out`, `assemble`,
   `compile_full`, `refine_global`, `write_outputs`
-- Subgrafo: `write_slide`, `compile_slide`, `route_slide`, `refine_slide`, `finish_slide`
+- Subgrafo: `write_slide`, `compile_slide`, `route_slide`, `review_slide`, `route_review`,
+  `refine_slide`, `refine_facts`, `finish_slide`
 
 ## Antes de dar un cambio por terminado
 

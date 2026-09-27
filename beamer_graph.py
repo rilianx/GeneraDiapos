@@ -30,9 +30,9 @@ import tempfile
 import threading
 import tomllib
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
@@ -50,7 +50,15 @@ _DEFAULT_MODELS = {"anthropic": ("claude-opus-5-5", "claude-sonnet-5"),
                    "openai": ("gpt-5.4-mini", "gpt-5.4-mini")}
 MODEL_OUTLINE = os.environ.get("LLM_MODEL_OUTLINE") or _DEFAULT_MODELS[PROVIDER][0]
 MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES") or _DEFAULT_MODELS[PROVIDER][1]
-MAX_SLIDE_ATTEMPTS = 3
+# Esfuerzo de razonamiento (solo OpenAI): low | medium | high. Vacío = el del modelo.
+# El guion es la decisión que más pesa; las diapos van sin razonamiento extra.
+REASONING_OUTLINE = os.environ.get("LLM_REASONING_OUTLINE") or "medium"
+REASONING_SLIDES = os.environ.get("LLM_REASONING_SLIDES") or None
+# Revisor de afirmaciones por diapositiva (juez LLM contra los fragmentos fuente)
+MODEL_REVIEW = os.environ.get("LLM_MODEL_REVIEW") or MODEL_SLIDES
+REASONING_REVIEW = os.environ.get("LLM_REASONING_REVIEW") or "medium"
+MAX_SLIDE_ATTEMPTS = 3      # refinados por compilación/estilo
+MAX_REVIEWS = 2             # revisión inicial + una verificación tras corregir afirmaciones
 MAX_GLOBAL_ATTEMPTS = 2
 MAX_OUTLINE_ATTEMPTS = 3
 OVERFULL_TOLERANCE_PT = 2.0
@@ -65,8 +73,98 @@ STYLE_DEFAULTS = {
     "max_caracteres_titulo": 60, "max_alerts": 2, "max_negritas": 3,
     "sin_punto_final": False, "prohibir_colores_directos": True,
     "prohibir_vspace_negativo": True, "tamanos_permitidos": [r"\small"],
+    "max_fraccion_vinetas": 0.4, "max_bloques": 2, "prohibir_alert_en_alertblock": True,
 }
 SLIDES_MARK = "%%SLIDES%%"
+
+# Tipos de diapositiva. La descripción va al guion; la plantilla (genérica, no de
+# ningún paper) va al prompt de la diapo; el contrato se verifica en kind_check.
+KINDS = {
+    "bullets": (
+        "lista breve; úsala solo cuando ningún otro formato sirva",
+        r"""\begin{frame}{El método reduce el tiempo sin perder precisión}
+\begin{itemize}
+  \item Idea principal en una línea.
+  \item Segunda idea, en paralelo gramatical.
+  \item \alert{La consecuencia que importa.}
+\end{itemize}
+\end{frame}""", None),
+    "columns": (
+        "dos columnas: comparar dos enfoques, o texto a un lado y fórmula/tabla al otro",
+        r"""\begin{frame}{Los enfoques clásicos ignoran la estructura}
+\begin{columns}[T]
+\column{0.48\textwidth}
+\textbf{Enfoque A}
+\begin{itemize}
+  \item Simple y barato.
+  \item No usa información del problema.
+\end{itemize}
+\column{0.48\textwidth}
+\textbf{Enfoque B}
+\[ s_i = |a_i|\cdot w_i \]
+Mide el efecto estimado de cada componente.
+\end{columns}
+\end{frame}""", (r"\\begin\{columns\}", "usa un entorno columns con dos \\column")),
+    "block": (
+        "bloques de Beamer: definición, resultado clave, limitación o mensaje para recordar",
+        r"""\begin{frame}{Promediar todo diluye la señal relevante}
+\begin{block}{Definición}
+Una restricción está \emph{activa} si se cumple con igualdad en el óptimo.
+\end{block}
+\begin{alertblock}{Problema}
+Las estrategias actuales pesan igual las restricciones activas e inactivas.
+\end{alertblock}
+\begin{exampleblock}{Idea}
+Ponderar cada restricción por su relevancia.
+\end{exampleblock}
+\end{frame}""", (r"\\begin\{(?:alert|example)?block\}", "usa al menos un block, alertblock o exampleblock")),
+    "equation": (
+        "una o dos ecuaciones centrales en display, cada una con una línea que explique qué significa",
+        r"""\begin{frame}{El Lagrangiano combina objetivo y restricciones}
+\[ L(x,\lambda) = f(x) + \sum_{j=1}^{m} \lambda_j\, g_j(x) \]
+\begin{itemize}
+  \item $\lambda_j \ge 0$ pondera la restricción $g_j$.
+  \item \alert{$\lambda_j = 0$ si la restricción no influye en el óptimo.}
+\end{itemize}
+\end{frame}""", (r"\\\[|\\begin\{(?:equation|align|gather|multline)\*?\}",
+                    "incluye al menos una ecuación en display (\\[ \\] o align)")),
+    "table": (
+        "tabla booktabs con solo las filas y columnas que sostienen el mensaje, y 2-3 líneas de lectura",
+        r"""\begin{frame}{El método nuevo gana en todas las comparaciones}
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Método & Tiempo (s) & Nodos \\ \midrule
+Base      & 120 & 5400 \\
+Nuevo     & \alert{64} & \alert{2900} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{itemize}
+  \item Reduce el tiempo casi a la mitad.
+\end{itemize}
+\end{frame}""", (r"\\begin\{tabular", "incluye la tabla con un entorno tabular (booktabs)")),
+    "algorithm": (
+        "pseudocódigo con algorithm2e, simplificado a los pasos esenciales",
+        r"""\begin{frame}{El algoritmo tiene dos fases}
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja $x$}
+\KwOut{índice $i^*$}
+calcular pesos $w$\;
+\For{$i \in 1..n$}{ $s_i \gets w_i \cdot d_i$\; }
+\Return $\arg\max_i s_i$\;
+\end{algorithm}
+\end{frame}""", (r"\\begin\{algorithm\}", "incluye el pseudocódigo en un entorno algorithm (algorithm2e)")),
+}
+
+KIND_ALIASES = {"alertblock": "block", "exampleblock": "block", "blocks": "block",
+                "two_columns": "columns", "column": "columns", "itemize": "bullets",
+                "list": "bullets", "tabular": "table", "math": "equation", "pseudocode": "algorithm"}
+
+# Una diapo de solo viñetas que cita una tabla o ecuación pasa a mostrarla.
+# (Un alg* puede citarse como contexto sin mostrar el pseudocódigo.)
+BULLETS_UPGRADE = {"tab": "table", "eq": "equation"}
 
 # ----------------------------------------------------------------------------
 # Esquemas
@@ -74,9 +172,16 @@ SLIDES_MARK = "%%SLIDES%%"
 class SlideSpec(BaseModel):
     title: str
     bullets: list[str]
-    kind: Literal["title", "bullets", "equation", "algorithm", "table"]
+    kind: str = Field(description="title, bullets, columns, block, equation, algorithm o table")
     sources: list[str] = Field(default_factory=list,
                                description="IDs de fragmentos que usa la diapo")
+
+    @field_validator("kind")
+    @classmethod
+    def _alias(cls, v: str) -> str:
+        # el modelo a veces usa el nombre del entorno LaTeX en vez del tipo
+        v = v.strip().lower()
+        return KIND_ALIASES.get(v, v)
 
 
 class Outline(BaseModel):
@@ -85,6 +190,21 @@ class Outline(BaseModel):
     venue: str
     notation: str = Field(description="Glosario breve de símbolos comunes a todas las diapos")
     slides: list[SlideSpec]
+
+
+class Claim(BaseModel):
+    afirmacion: str
+    veredicto: str = Field(description="respaldada | no_respaldada | contradicha")
+    evidencia: str = Field(description="cita breve de la fuente, o por qué no hay respaldo")
+
+    @field_validator("veredicto")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return v.strip().lower().replace(" ", "_")
+
+
+class Review(BaseModel):
+    claims: list[Claim]
 
 
 FrameResult = tuple[int, str, str, int, list[str]]  # (idx, frame, status, intentos, avisos)
@@ -118,7 +238,11 @@ class SlideState(TypedDict, total=False):
     packages: str
     style_guide: str
     limits: dict
+    damaged: list[str]      # tablas citadas que la extracción dejó dañadas
     style_errors: list[str]
+    fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
+    reviews: int            # revisiones hechas (presupuesto propio, no gasta attempts)
+    best_frame: str         # última versión que compiló: nunca se pierde
     frame: str
     errors: list[str]
     warnings: list[str]
@@ -132,10 +256,15 @@ class SlideOutput(TypedDict):
 # ----------------------------------------------------------------------------
 # LLM (aislado para poder simularlo en pruebas)
 # ----------------------------------------------------------------------------
-def _chat(model: str):
+def _chat(model: str, effort: str | None = None):
     if PROVIDER == "openai":                      # lee OPENAI_API_KEY del entorno
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, max_tokens=8000, max_retries=3)
+        if not effort:
+            return ChatOpenAI(model=model, max_tokens=8000, max_retries=3)
+        # Razonamiento + function calling solo se admite en la Responses API. El
+        # razonamiento consume tokens de salida: se amplía el tope.
+        return ChatOpenAI(model=model, max_tokens=24000, max_retries=3,
+                          use_responses_api=True, reasoning={"effort": effort})
     from langchain_anthropic import ChatAnthropic  # lee ANTHROPIC_API_KEY del entorno
     return ChatAnthropic(model=model, max_tokens=8000, max_retries=3)
 
@@ -155,7 +284,7 @@ def registrar_uso(model: str, msg) -> None:
 
 
 def call_text(model: str, prompt: str) -> str:
-    msg = _chat(model).invoke(prompt)
+    msg = _chat(model, REASONING_SLIDES).invoke(prompt)
     registrar_uso(model, msg)
     out = msg.content
     if isinstance(out, list):
@@ -163,10 +292,11 @@ def call_text(model: str, prompt: str) -> str:
     return strip_fences(out)
 
 
-def call_structured(model: str, schema: type[BaseModel], prompt: str) -> BaseModel:
+def call_structured(model: str, schema: type[BaseModel], prompt: str,
+                    effort: str | None = None) -> BaseModel:
     # function_calling tolera campos opcionales del esquema en ambos proveedores
     kw = {"method": "function_calling"} if PROVIDER == "openai" else {}
-    res = _chat(model).with_structured_output(schema, include_raw=True, **kw).invoke(prompt)
+    res = _chat(model, effort).with_structured_output(schema, include_raw=True, **kw).invoke(prompt)
     registrar_uso(model, res["raw"])
     if res["parsed"] is None:
         raise res["parsing_error"] or RuntimeError("El modelo no devolvió el esquema pedido")
@@ -181,6 +311,8 @@ _NEWLINE_CMD = re.compile(r"\n(?=(?:abla|eq|eg|ot|oindent|ewline|u|i|leq|geq|mid
 
 def restaurar_escapes(obj):
     if isinstance(obj, str):
+        # a veces el modelo emite \u0000 + hex en vez del carácter (á → "\0e1")
+        obj = re.sub("\x00([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), obj)
         obj = _NEWLINE_CMD.sub(lambda _: "\\n", obj)
         return "".join(_CONTROL.get(c, c) for c in obj)
     if isinstance(obj, list):
@@ -245,6 +377,9 @@ def chunk_document(text: str, fmt: str) -> dict[str, str]:
         take(r"^(?:\*\*)?Algorithm \d+.*?(?=\n\s*\n)", "alg", re.M | re.S)
         heading = r"^#{1,4}\s+(.+)$"
 
+    if fmt != "tex":
+        text = _ordenar_tablas_md(text, chunks)
+
     parts = re.split(heading, text, flags=re.M)
     sections = [("Preámbulo", parts[0])] + list(zip(parts[1::2], parts[2::2]))
     n = 0
@@ -255,6 +390,51 @@ def chunk_document(text: str, fmt: str) -> dict[str, str]:
         n += 1
         chunks[f"sec{n}"] = f"{title.strip()}\n{content}"
     return chunks
+
+TABLA_DANADA = ("[TABLA DAÑADA EN LA EXTRACCIÓN: celdas mezcladas o sin encabezados. "
+                "No la reproduzcas como tabla; toma las cifras del texto de la sección.]")
+_CAPTION = re.compile(r"\*\*Table\s+(\d+)\*\*[.:]?\s*([^\n]*)")
+# Entre dos trozos de una tabla partida solo hay cabeceras/pies de página (números, revista)
+_ENTRE_PAGINAS = re.compile(r"^(?:\s|\d+|[A-Z][A-Za-z. ]{0,40})*$")
+
+
+def tabla_danada(md: str) -> bool:
+    """Heurística: pymupdf4llm pega celdas con <br> cuando no entiende la tabla
+    (típico de tablas rotadas o partidas entre páginas)."""
+    rows = [r for r in md.splitlines() if r.startswith("|") and not re.fullmatch(r"[|\-: ]+", r)]
+    return sum(r.count("<br>") for r in rows[1:]) > 2
+
+
+def _ordenar_tablas_md(text: str, chunks: dict[str, str]) -> str:
+    """Pega a cada tabla su título, la numera como en el paper y une los trozos de
+    una tabla partida en varias páginas. Las tablas rotas quedan marcadas."""
+    marks = list(re.finditer(r" \[(tab\d+)\] ", text))
+    if not marks:
+        return text
+    tabs = {m.group(1): chunks.pop(m.group(1)) for m in marks}
+    groups: list[dict] = []                # {num, caption, ids}
+    used, prev_end = set(), 0
+    for m in marks:
+        before = text[max(prev_end, m.start() - 600):m.start()]
+        caps = [c for c in _CAPTION.finditer(before) if c.group(1) not in used]
+        if caps:
+            used.add(caps[-1].group(1))
+            groups.append({"num": int(caps[-1].group(1)), "caption": caps[-1].group(2).strip(), "ids": [m.group(1)]})
+        elif groups and _ENTRE_PAGINAS.match(text[prev_end:m.start()]):
+            groups[-1]["ids"].append(m.group(1))          # continuación de la tabla anterior
+        else:
+            num = (groups[-1]["num"] + 1) if groups else 1
+            groups.append({"num": num, "caption": "", "ids": [m.group(1)]})
+        prev_end = m.end()
+    for g in groups:
+        new = f"tab{g['num']}"
+        md = "\n".join(tabs[i] for i in g["ids"])
+        head = f"Table {g['num']}" + (f": {g['caption']}" if g["caption"] else "")
+        # una tabla rota solo confunde al modelo: se deja el aviso y no su contenido
+        chunks[new] = head + "\n" + (TABLA_DANADA if tabla_danada(md) else md)
+        for k, old in enumerate(g["ids"]):
+            text = text.replace(f" [{old}] ", f" [@{new}] " if k == 0 else " ", 1)
+    return text.replace("[@tab", "[tab")
 
 # ----------------------------------------------------------------------------
 # LaTeX: compilación, log, lint
@@ -386,6 +566,10 @@ def describe_limits(lim: dict) -> str:
         out.append("sin \\color ni \\textcolor")
     if lim["prohibir_vspace_negativo"]:
         out.append("sin \\vspace negativo")
+    out.append(f"máximo {lim['max_fraccion_vinetas']:.0%} de diapositivas solo con viñetas")
+    out.append(f"máximo {lim['max_bloques']} bloques por diapositiva")
+    if lim["prohibir_alert_en_alertblock"]:
+        out.append("sin \\alert dentro de alertblock")
     out.append("tamaños de letra fuera de tablas/algoritmos: " + (", ".join(lim["tamanos_permitidos"]) or "ninguno"))
     return "; ".join(out)
 
@@ -395,6 +579,51 @@ def _plain_words(s: str) -> int:
     s = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?", " ", s)
     s = re.sub(r"[{}\\]", " ", s)
     return len(s.split())
+
+
+def kind_check(frame: str, kind: str, sources: list[str], damaged: tuple = ()) -> list[str]:
+    """El frame debe tener el formato de su tipo y mostrar las tablas/algoritmos/ecuaciones que cita."""
+    body = re.sub(r"(?<!\\)%.*", "", frame)
+    rules = [KINDS[kind][2]] if kind in KINDS and KINDS[kind][2] else []
+    if any(re.fullmatch(r"tab\d+", c) and c not in damaged for c in sources):  # tabla citada → se muestra
+        rules.append(KINDS["table"][2])
+    errs = [f"Formato ({kind}): {msg}" for pat, msg in dict(rules).items() if not re.search(pat, body)]
+    return errs + filas_repetidas(body)
+
+
+def _sin_colspec(tab: str) -> str:
+    """Quita \\begin{tabular}{colspec}, que puede tener llaves anidadas (@{})."""
+    i = tab.index("}") + 1                       # fin de \\begin{tabular}
+    if i < len(tab) and tab[i] == "{":
+        depth = 0
+        for j in range(i, len(tab)):
+            depth += {"{": 1, "}": -1}.get(tab[j], 0)
+            if depth == 0:
+                return tab[j + 1:]
+    return tab[i:]
+
+
+def filas_repetidas(body: str) -> list[str]:
+    """Filas de tabla con exactamente los mismos números: señal de datos copiados/inventados."""
+    errs = []
+    for tab in re.findall(r"\\begin\{tabular\*?\}.*?\\end\{tabular\*?\}", body, re.S):
+        seen: dict[tuple, str] = {}
+        tab = _sin_colspec(tab)
+        for row in tab.split(r"\\"):
+            cells = row.split("&")
+            nums = tuple(re.findall(r"\d[\d.,]*", "&".join(cells[1:])))
+            name = re.sub(r"\\[a-zA-Z]+|[{}]", "", cells[0]).split("\n")[-1].strip()
+            if len(cells) > 1 and all(re.fullmatch(r"\s*(?:--+|—|-|n/?a|)\s*", c) for c in cells[1:]):
+                errs.append(f"La fila '{name}' no tiene datos: omítela en vez de rellenarla con guiones")
+                continue
+            if len(nums) < 2:
+                continue
+            if nums in seen:
+                errs.append(f"Las filas '{seen[nums]}' y '{name}' de la tabla tienen los mismos números: "
+                            "no copies filas; incluye solo elementos con datos en la fuente")
+            else:
+                seen[nums] = name
+    return errs
 
 
 def style_check(frame: str, lim: dict) -> list[str]:
@@ -434,6 +663,12 @@ def style_check(frame: str, lim: dict) -> list[str]:
         errs.append(f"Demasiadas negritas (máximo {lim['max_negritas']})")
     if lim["prohibir_colores_directos"] and re.search(r"\\(text)?color\b", body):
         errs.append("Colores directos no permitidos: usa \\alert o macros de la base")
+    n_blocks = len(re.findall(r"\\begin\{(?:alert|example)?block\}", body))
+    if n_blocks > lim["max_bloques"]:
+        errs.append(f"{n_blocks} bloques; máximo {lim['max_bloques']}: combina con texto, lista o fórmula")
+    if lim["prohibir_alert_en_alertblock"] and any(
+            "\\alert" in b for b in re.findall(r"\\begin\{alertblock\}(.*?)\\end\{alertblock\}", body, re.S)):
+        errs.append("\\alert dentro de alertblock es redundante: quítalo")
     if lim["prohibir_vspace_negativo"] and re.search(r"\\vspace\*?\{\s*-", body):
         errs.append("\\vspace negativo no permitido: reduce contenido en vez de comprimir")
 
@@ -457,6 +692,15 @@ Devuelve:
 - slides: la primera con kind='title' y sin sources. Cada una de las demás debe listar en sources \
 los IDs exactos de los fragmentos que necesita (incluidos eq*, tab*, alg* si usa esa ecuación, \
 tabla o algoritmo). Si un tema no cabe en los límites, divídelo en dos diapositivas.
+- kind: elige el formato que mejor muestre cada idea y VARÍALOS a lo largo de la presentación:
+{kinds}
+  Cita un tab* solo si la diapo muestra esa tabla (kind table o columns); cita un eq* si muestra \
+esa ecuación. Si un tab* está marcado como TABLA DAÑADA, no lo reemplaces por otra tabla del \
+paper: arma la tabla con las cifras que da el texto de esa sección (cita la sección), o usa otro \
+formato. Las fórmulas que definen el método deben aparecer en display, no descritas con \
+palabras. Si el algoritmo es central, dedícale una diapo algorithm.
+- bullets: el contenido que debe cubrir la diapo (ideas y datos concretos: cifras, nombres), \
+no el texto literal de viñetas.
 
 Guía de estilo:
 {guide}
@@ -474,15 +718,23 @@ Reglas:
 - Macros disponibles: {macros}
 - Notación común (respétala): {notation}
 - Usa solo información del CONTEXTO. No inventes cifras ni resultados.
+- Tablas: solo filas y columnas que existan en una tabla del CONTEXTO o cifras explícitas del \
+texto. Si un elemento no tiene datos, NO inventes ni copies su fila: omítelo o arma la tabla con \
+las cifras del texto; nunca dejes filas con "--". No crees columnas agregadas (mejor/peor, promedios) que la fuente no tenga. \
+Respeta qué mide cada cifra (p. ej. "ganancia frente al mejor competidor" no es "frente a X").
 - Debe caber en una pantalla. Si el contenido es mucho, prioriza y resume.
 
 Guía de estilo:
 {guide}
 Límites obligatorios (se verifican automáticamente): {limits}
 
-Tipo: {kind}
+Tipo: {kind} ({kind_desc})
+Ejemplo de formato para este tipo (solo la estructura; el contenido es inventado y no debe copiarse):
+{kind_example}
+Puedes combinar con un alertblock o exampleblock para el mensaje clave si cabe.
+
 Título: {title}
-Puntos a cubrir:
+Contenido a cubrir (ideas y datos, no viñetas literales):
 {bullets}
 
 CONTEXTO:
@@ -496,8 +748,11 @@ Errores del compilador (las líneas son relativas al frame):
 Reglas de estilo incumplidas:
 {style_errors}
 
+Afirmaciones sin respaldo en la fuente (corrígelas según el CONTEXTO o elimínalas):
+{fact_errors}
+
 Para desbordes o exceso de contenido: acorta, fusiona o elimina lo menos importante.
-No cambies el contenido factual. Respeta la guía y los límites:
+No cambies el contenido factual respaldado. Respeta la guía y los límites:
 {guide}
 Límites: {limits}
 Macros disponibles: {macros}
@@ -507,6 +762,28 @@ FRAME:
 {frame}
 
 CONTEXTO (para verificar datos):
+{context}"""
+
+REVIEW_SLIDE_PROMPT = r"""Eres un revisor exigente. Verifica esta diapositiva contra el CONTEXTO, que \
+es la única fuente válida (fragmentos del paper).
+
+Enumera solo las afirmaciones sustantivas: hechos, cifras y a qué método/métrica/configuración \
+corresponden, comparaciones, causas y conclusiones. NO evalúes rótulos ni encabezados (títulos de \
+bloque, "Idea clave", "Contexto", nombres de sección), frases introductorias ni el formato LaTeX. \
+Una paráfrasis o resumen fiel de la fuente cuenta como respaldada, aunque use otras palabras. \
+Veredictos:
+- respaldada: la fuente lo dice o se deduce directamente.
+- no_respaldada: una afirmación sustantiva que la fuente no contiene (p. ej. extensiones o \
+trabajo futuro inventados).
+- contradicha: SOLO si puedes citar el pasaje de la fuente que dice otra cosa (cifra atribuida al \
+método o métrica equivocada, trabajo futuro presentado como hecho, comparación invertida).
+En evidencia cita textualmente el pasaje de la fuente (para contradicha es obligatorio).
+Ante la duda, respaldada: un falso positivo cuesta un refinado innecesario.
+
+DIAPOSITIVA:
+{frame}
+
+CONTEXTO:
 {context}"""
 
 REFINE_GLOBAL_PROMPT = r"""El cuerpo de esta presentación Beamer compila bien diapositiva por
@@ -587,10 +864,26 @@ def ingest(state: State) -> dict:
     return {"chunks": chunks}
 
 
+def ajustar_kinds(o: Outline, chunks: dict | None = None) -> Outline:
+    chunks = chunks or {}
+    for s in o.slides:
+        if s.kind == "bullets":
+            for pref, kind in BULLETS_UPGRADE.items():
+                if any(re.fullmatch(pref + r"\d+", c) and TABLA_DANADA not in chunks.get(c, "")
+                       for c in s.sources):
+                    s.kind = kind
+                    break
+    return o
+
+
 def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[str]:
     errs = []
     lim = lim or STYLE_DEFAULTS
     for i, s in enumerate(o.slides):
+        if s.kind != "title" and s.kind not in KINDS:
+            errs.append(f"Diapositiva {i} ('{s.title}') tiene kind='{s.kind}' inválido; "
+                        f"usa uno de: {', '.join(KINDS)}")
+            continue
         if len(s.bullets) > lim["max_items"]:
             errs.append(f"Diapositiva {i} ('{s.title}') tiene {len(s.bullets)} puntos; "
                         f"máximo {lim['max_items']}: divídela")
@@ -602,22 +895,37 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
     return errs
 
 
+def variedad_outline(o: Outline, lim: dict) -> list[str]:
+    """Aviso (no bloquea): demasiadas diapos de solo viñetas."""
+    content = [s for s in o.slides if s.kind != "title"]
+    n_bul = sum(s.kind == "bullets" for s in content)
+    if len(content) >= 4 and n_bul > lim["max_fraccion_vinetas"] * len(content):
+        return [f"{n_bul} de {len(content)} diapositivas son solo viñetas; máximo "
+                f"{lim['max_fraccion_vinetas']:.0%}. Usa columns, block, equation o table"]
+    return []
+
+
 def outline(state: State) -> dict:
     chunks = state["chunks"]
     listing = "\n\n".join(f"[{cid}]\n{txt}" for cid, txt in chunks.items())
     base = load_base(state)
     guide, lim = load_style(state.get("style_path"))
     feedback = ""
-    for _ in range(MAX_OUTLINE_ATTEMPTS):
-        o = call_structured(MODEL_OUTLINE, Outline, OUTLINE_PROMPT.format(
+    for attempt in range(1, MAX_OUTLINE_ATTEMPTS + 1):
+        o = call_structured(MODEL_OUTLINE, Outline, effort=REASONING_OUTLINE, prompt=OUTLINE_PROMPT.format(
+            kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide=guide or "-", limits=describe_limits(lim)))
+        o = ajustar_kinds(o, chunks)
         errs = validate_outline(o, chunks, lim)
-        if not errs:
+        soft = variedad_outline(o, lim)
+        if not errs and (not soft or attempt == MAX_OUTLINE_ATTEMPTS):
+            for w in soft:
+                print(f"Aviso del guion: {w}")
             d = o.model_dump()
             head, tail = split_base(base, d)
             return {"outline": d, "head": head, "tail": tail}
-        feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs) + "\n"
+        feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs + soft) + "\n"
     raise RuntimeError(f"Outline inválido tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
 
 
@@ -645,7 +953,9 @@ def fan_out(state: State) -> list[Send]:
     return [Send("slide", {
         "idx": i, "spec": s, "head": state["head"], "notation": o["notation"],
         "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": "\n\n".join(chunks[c] for c in s["sources"]),
-        "attempts": 0, "errors": [], "style_errors": [], "warnings": [],
+        "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
+        "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
+        "warnings": [],
     }) for i, s in enumerate(o["slides"])]
 
 
@@ -712,7 +1022,8 @@ def write_outputs(state: State) -> dict:
     lines.append("\n| # | Diapositiva | Estado | Intentos | Avisos |\n|---|---|---|---|---|")
     for idx, _, status, attempts, warns in sorted(state["frames"]):
         title = state["outline"]["slides"][idx]["title"].replace("|", "/")
-        lines.append(f"| {idx} | {title} | {status} | {attempts} | {'; '.join(warns) or '-'} |")
+        warns = [" ".join(w.replace("|", "/").split()) for w in warns]   # una celda de tabla md
+        lines.append(f"| {idx} | {title} | {status} | {attempts} | {'<br>'.join(warns) or '-'} |")
     lines += informe_uso()
     (out / "informe.md").write_text("\n".join(lines) + "\n")
     return {}
@@ -726,7 +1037,8 @@ def write_slide(s: SlideState) -> dict:
         return {"frame": "\\begin{frame}[plain]\n\\titlepage\n\\end{frame}"}
     frame = call_text(MODEL_SLIDES, SLIDE_PROMPT.format(
         macros=s["macros"], packages=s["packages"], guide=s["style_guide"],
-        limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"], title=spec["title"],
+        limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"],
+        kind_desc=KINDS[spec["kind"]][0], kind_example=KINDS[spec["kind"]][1], title=spec["title"],
         bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"]))
     return {"frame": frame}
 
@@ -736,13 +1048,35 @@ def compile_slide(s: SlideState) -> dict:
     if not errors:
         tex, offset = standalone(s["head"], s["frame"])
         errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] == "title")
-    style = [] if s["spec"]["kind"] == "title" else style_check(s["frame"], s["limits"])
-    return {"errors": errors, "style_errors": style}
+    spec = s["spec"]
+    style = [] if spec["kind"] == "title" else (
+        kind_check(s["frame"], spec["kind"], spec["sources"], tuple(s.get("damaged", ())))
+        + style_check(s["frame"], s["limits"]))
+    out = {"errors": errors, "style_errors": style}
+    if not errors:
+        out["best_frame"] = s["frame"]
+    return out
 
 
 def route_slide(s: SlideState) -> str:
     if (s["errors"] or s["style_errors"]) and s["attempts"] < MAX_SLIDE_ATTEMPTS:
         return "refine_slide"
+    if s["errors"] or s["spec"]["kind"] == "title" or s.get("reviews", 0) >= MAX_REVIEWS:
+        return "finish_slide"
+    return "review_slide"                       # compila: se revisan las afirmaciones
+
+
+def review_slide(s: SlideState) -> dict:
+    r = call_structured(MODEL_REVIEW, Review, effort=REASONING_REVIEW,
+                        prompt=REVIEW_SLIDE_PROMPT.format(frame=s["frame"], context=s["context"]))
+    bad = [f"{c.veredicto}: «{c.afirmacion}» ({c.evidencia})"
+           for c in r.claims if c.veredicto in ("no_respaldada", "contradicha")]
+    return {"fact_errors": bad, "reviews": s.get("reviews", 0) + 1}
+
+
+def route_review(s: SlideState) -> str:
+    if s["fact_errors"] and s["reviews"] < MAX_REVIEWS:
+        return "refine_facts"
     return "finish_slide"
 
 
@@ -750,16 +1084,35 @@ def refine_slide(s: SlideState) -> dict:
     frame = call_text(MODEL_SLIDES, REFINE_SLIDE_PROMPT.format(
         errors="\n".join(s["errors"]) or "ninguno",
         style_errors="\n".join(s["style_errors"]) or "ninguna",
+        fact_errors="\n".join(s.get("fact_errors", [])) or "ninguna",
         guide=s["style_guide"], limits=describe_limits(s["limits"]),
         macros=s["macros"], frame=s["frame"], context=s["context"]))
     return {"frame": frame, "attempts": s["attempts"] + 1}
 
 
+def refine_facts(s: SlideState) -> dict:
+    """Corrige afirmaciones: usa el presupuesto del revisor, no el de compilación/estilo."""
+    return {"frame": refine_slide(s)["frame"]}
+
+
 def finish_slide(s: SlideState) -> dict:
-    status = "failed" if s["errors"] else "ok"   # el estilo nunca descarta una diapo que compila
-    warns = [f"Estilo: {e}" for e in s["style_errors"]]
-    warns += soft_checks(s["frame"], s["context"] + "\n" + json.dumps(s["spec"]))
-    return {"frames": [(s["idx"], s["frame"], status, s["attempts"], warns)]}
+    frame, warns = s["frame"], []
+    if s["errors"] and s.get("best_frame"):
+        # un refinado rompió la compilación: se vuelve a la última versión que compilaba
+        frame = s["best_frame"]
+        spec = s["spec"]
+        style = kind_check(frame, spec["kind"], spec["sources"], tuple(s.get("damaged", ()))) + \
+            style_check(frame, s["limits"])
+        warns.append("Se conservó la última versión que compilaba (los refinados posteriores fallaron)")
+        errors = []
+    else:
+        style, errors = s["style_errors"], s["errors"]
+    status = "failed" if errors else "ok"        # el estilo nunca descarta una diapo que compila
+    warns += [f"Compilación: {e}" for e in errors]
+    warns += [f"Estilo: {e}" for e in style]
+    warns += [f"Revisor: {e}" for e in s.get("fact_errors", [])]
+    warns += soft_checks(frame, s["context"] + "\n" + json.dumps(s["spec"]))
+    return {"frames": [(s["idx"], frame, status, s["attempts"], warns)]}
 
 # ----------------------------------------------------------------------------
 # Construcción de los grafos
@@ -769,10 +1122,14 @@ def build_slide_graph():
     g.add_node("write_slide", write_slide)
     g.add_node("compile_slide", compile_slide)
     g.add_node("refine_slide", refine_slide)
+    g.add_node("review_slide", review_slide)
+    g.add_node("refine_facts", refine_facts)
     g.add_node("finish_slide", finish_slide)
     g.add_edge(START, "write_slide")
     g.add_edge("write_slide", "compile_slide")
-    g.add_conditional_edges("compile_slide", route_slide, ["refine_slide", "finish_slide"])
+    g.add_conditional_edges("compile_slide", route_slide, ["refine_slide", "review_slide", "finish_slide"])
+    g.add_conditional_edges("review_slide", route_review, ["refine_facts", "finish_slide"])
+    g.add_edge("refine_facts", "compile_slide")
     g.add_edge("refine_slide", "compile_slide")
     g.add_edge("finish_slide", END)
     return g.compile()

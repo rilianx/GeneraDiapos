@@ -10,7 +10,11 @@
 texto = '''
 - Una idea por diapositiva. El título la afirma como frase breve
   ("lsmear reduce el tiempo a la mitad"), no como rótulo ("Resultados").
-- Viñetas cortas, en paralelo gramatical, sin párrafos.
+- Viñetas cortas, en paralelo gramatical, sin párrafos. No abuses de ellas:
+  alterna con dos columnas, bloques (block, alertblock, exampleblock),
+  ecuaciones en display y tablas.
+- Usa alertblock para limitaciones o mensajes clave, block para definiciones y
+  exampleblock para ideas o ejemplos.
 - \alert{} para el único concepto clave de la diapositiva, no como adorno.
 - Ecuaciones: solo las esenciales, cada una acompañada de una línea que diga
   qué significa.
@@ -40,3 +44,8 @@ prohibir_colores_directos = true    # \color, \textcolor: usa \alert o macros de
 prohibir_vspace_negativo = true
 # \footnotesize, \scriptsize y \tiny solo se permiten dentro de tablas y algoritmos
 tamanos_permitidos = ['\small']
+# Guion: fracción máxima de diapositivas que son solo viñetas (el resto: columns,
+# block, equation, table, algorithm). Se aplica con 4 o más diapos de contenido.
+max_fraccion_vinetas = 0.4
+max_bloques = 2                     # block/alertblock/exampleblock por diapositiva
+prohibir_alert_en_alertblock = true
