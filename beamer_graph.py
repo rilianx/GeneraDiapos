@@ -237,9 +237,12 @@ class SlideOutput(TypedDict):
 def _chat(model: str, effort: str | None = None):
     if PROVIDER == "openai":                      # lee OPENAI_API_KEY del entorno
         from langchain_openai import ChatOpenAI
-        # el razonamiento consume tokens de salida: se amplía el tope
-        return ChatOpenAI(model=model, max_tokens=24000 if effort else 8000, max_retries=3,
-                          **({"reasoning_effort": effort} if effort else {}))
+        if not effort:
+            return ChatOpenAI(model=model, max_tokens=8000, max_retries=3)
+        # Razonamiento + function calling solo se admite en la Responses API. El
+        # razonamiento consume tokens de salida: se amplía el tope.
+        return ChatOpenAI(model=model, max_tokens=24000, max_retries=3,
+                          use_responses_api=True, reasoning={"effort": effort})
     from langchain_anthropic import ChatAnthropic  # lee ANTHROPIC_API_KEY del entorno
     return ChatAnthropic(model=model, max_tokens=8000, max_retries=3)
 
