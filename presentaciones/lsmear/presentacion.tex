@@ -1,0 +1,313 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+
+% Macros disponibles para el modelo: se detectan automáticamente y se le
+% informan en cada diapositiva. Agrega aquí las que necesite cada paper.
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% lsmear: selección de variables con multiplicadores de Lagrange óptimos, Ignacio Araya \and Bertrand Neveu y J Glob Optim (2017) se rellenan desde el guion.
+% Si los reemplazas a mano, se respetan tal cual.
+\title{lsmear: selección de variables con multiplicadores de Lagrange óptimos}
+\subtitle{J Glob Optim (2017)}
+\author{Ignacio Araya \and Bertrand Neveu}
+\date{}
+
+\begin{document}
+
+\begin{frame}{\texttt{NCOP}: contexto y bisección}
+\small
+\begin{columns}[T,onlytextwidth]
+  \column{0.48\textwidth}
+  \begin{block}{Contexto}
+  \begin{itemize}
+    \item Optimización global continua y determinista mediante \textit{branch and bound} intervalar.
+    \item Problema: $f:\R^n\to\R$ y $g:\R^n\to\R^m$ sobre una caja.
+  \end{itemize}
+  \end{block}
+
+  \column{0.48\textwidth}
+  \begin{exampleblock}{Bisección}
+  \begin{itemize}
+    \item Divide la caja actual en dos subcajas.
+    \item Muchas estrategias usan información local para elegir la variable.
+    \item Una mala ordenación inicial puede degradar el rendimiento.
+  \end{itemize}
+  \end{exampleblock}
+\end{columns}
+\end{frame}
+
+\begin{frame}{El criterio smear clásico ignora pesos de restricciones}
+\small
+\begin{itemize}
+  \item \texttt{round-robin} no usa información del sistema.
+  \item \texttt{largest-first} ignora la estructura de derivadas.
+  \item \texttt{smearsum}, \texttt{smearmax} y \texttt{smearsumrel} tratan todas las restricciones por igual.
+  \item \texttt{ViolationTransfer} pondera restricciones, pero exige relajación convexa intrusiva.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{El solver estándar alterna poda y bifurcación}
+\small
+\begin{block}{Estructura básica}
+\begin{itemize}
+  \item Selecciona una caja activa, la bisecciona y filtra cada subcaja.
+  \item \textbf{Poda}: actualiza la cota inferior con \texttt{contractors} sobre $x_o$.
+  \item \textbf{Upper bounding}: busca soluciones factibles y mejora $UB$ y $x_{UB}$.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Cuello de botella}
+La calidad de la variable de bisección domina el tamaño del árbol.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} pondera restricciones con duales lineales}
+\small
+\begin{block}{Idea del método}
+\begin{itemize}
+  \item Linealiza cada $g_j(x)$ con Taylor de primer orden alrededor del centro de la caja.
+  \item Resuelve un problema lineal con cotas de caja mediante \texttt{simplex}.
+  \item Usa \alert{multiplicadores duales óptimos} para ponderar el Lagrangiano aproximado.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Si el LP falla}
+Si no hay solución óptima o el valor es no acotado, \texttt{lsmear} cae a \texttt{smearsum}.
+\end{alertblock}
+
+\end{frame}
+
+\begin{frame}{La variante básica usa dos fases}
+\small
+\begin{block}{Idea del método}
+\begin{itemize}
+  \item Fase 1: linealiza cada restricción alrededor del punto medio de la caja.
+  \item Fase 2: mide el impacto variable por variable en el Lagrangiano.
+  \item Los multiplicadores de la relajación lineal reemplazan a los del problema original.
+\end{itemize}
+\end{block}
+
+\[
+g_j(x)\approx g_j(\operatorname{mid}(\mathbf{x}))+\mathbf{J}_{j\cdot}(\operatorname{mid}(\mathbf{x}))^\top\!\left(x-\operatorname{mid}(\mathbf{x})\right)
+\]
+\small La restricción se aproxima con el término lineal de Taylor en el centro de la caja.
+
+\[
+L(x,\lambda^*)=f(x)+\sum_{j=1}^m \lambda_j^*\, g_j(x)
+\]
+\small Los pesos $\lambda^*$ provienen del problema lineal y estiman la importancia de cada restricción.
+
+\end{frame}
+
+\begin{frame}{La selección maximiza un smear ponderado}
+\small
+\begin{block}{Idea central}
+\[
+D_i=\lambda_i^*+\sum_{j=1}^{m}\lambda_{n+j}^*\,\mathbf{J}_{ji}
+\]
+\[
+\text{impacto}(x_i)=\left|D_i\right|\,\mathrm{wid}(x_i)
+\]
+\end{block}
+\small
+\begin{itemize}
+  \item \texttt{lsmear} usa multiplicadores duales óptimos para ponderar restricciones.
+  \item \(\mathbf{J}_{ji}\) aproxima \(\partial g_j/\partial x_i\) con derivadas intervalares.
+  \item El impacto combina sensibilidad y ancho del intervalo de \(x_i\).
+  \item Se elige la variable con \alert{mayor magnitud de impacto}.
+\end{itemize}
+\begin{alertblock}{Limitación y fallback}
+Si el programa lineal no tiene solución o es no acotado, se usa \texttt{smearsum}.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} en dos fases}
+\small
+\begin{block}{Idea}
+La estrategia usa una \alert{estimación de multiplicadores duales óptimos} para ponderar las restricciones.
+\end{block}
+
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja $\mathbf{x}$, Jacobiano intervalar $\mathbf{J}$, restricciones $g$}
+\KwOut{variable a biseccionar}
+linealizar $g$ en torno a $\mathrm{mid}(\mathbf{x})$\;
+resolver el LP con la cota del objetivo no acotada\;
+\If{el LP no tiene solución o es no acotado}{
+  \Return \texttt{smearsum}$(\mathbf{x},\mathbf{J})$\;
+}
+\For{$i \in 1,\dots,n$}{
+  $D \gets \lambda_i^*$\;
+  \For{$j \in 1,\dots,m$}{
+    $D \gets D + \lambda_{n+j}^*\,\mathbf{J}_{ji}$\;
+  }
+  evaluar $\lvert D \cdot \mathrm{wid}(x_i)\rvert$\;
+}
+\Return la variable con mayor impacto\;
+\end{algorithm}
+
+\begin{alertblock}{Implementación}
+\small
+Se usa \texttt{SoPlex} para resolver el problema primal y el dual.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{Cuatro variantes aíslan el efecto de cada decisión}
+\small
+\begin{columns}[T]
+\column{0.48\textwidth}
+\textbf{Linealización}
+\begin{itemize}
+  \item \texttt{lsmear-MG} usa el gradiente en el punto medio.
+  \item \texttt{lsmear-LI} reemplaza \texttt{J\textsubscript{ji}} por su media en el lagrangiano.
+  \item Ambas conservan una estimación local y barata.
+\end{itemize}
+
+\column{0.48\textwidth}
+\textbf{Relajación}
+\begin{itemize}
+  \item \texttt{lsmear-LR} obtiene $\lambda^*$ desde una relajación lineal.
+  \item \texttt{lsmear-LRI} combina esa relajación con el impacto lineal.
+  \item \alert{Aíslan el efecto de la linealización y de los multiplicadores.}
+\end{itemize}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{\texttt{IbexOpt} y \texttt{COCONUT} fijan el experimento}
+\small
+
+\begin{block}{Configuración experimental}
+\begin{itemize}
+  \item \texttt{IbexOpt} integra \texttt{HC4}, \texttt{ACID}, \texttt{AF2}, \texttt{XNewton}, \texttt{inHC4} e \texttt{InnerPolytope}.
+  \item Se evaluaron 76 instancias de \texttt{COCONUT} en cinco ejecuciones por estrategia.
+  \item Se reporta el promedio de las tres ejecuciones centrales.
+  \item La precisión objetivo fue $\epsilon=10^{-6}$.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Criterio de \texttt{timeout}}
+\texttt{timeout} indica no resolver la instancia en 7200 s en ninguna de las tres ejecuciones.
+\end{alertblock}
+
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} supera a las estrategias clásicas}
+\small
+
+\begin{block}{Comparación global}
+\begin{itemize}
+  \item Se comparó con \texttt{rr}, \texttt{lf}, \texttt{smearsum}, \texttt{smearmax} y \texttt{smearsumrel}.
+  \item \texttt{lf} obtuvo los peores resultados; \texttt{smearsum}, \texttt{smearmax} y \texttt{smearsumrel} rindieron de forma similar.
+  \item \alert{\texttt{lsmear}} superó claramente a las estrategias clásicas.
+\end{itemize}
+\end{block}
+
+\begin{exampleblock}{Ventaja media relativa}
+\[
+\text{gain}=\frac{\text{best classical time}}{\text{\texttt{lsmear} time}}
+\]
+Razón entre el mejor tiempo clásico y el tiempo de \texttt{lsmear} en cada instancia.
+
+\[
+2.04\ (\texttt{rr}),\quad 2.48\ (\texttt{lf}),\quad 1.34\ (\texttt{smearmax}),\quad 1.30\ (\texttt{smearsum}),\quad 1.32\ (\texttt{smearsumrel})
+\]
+Promedios reportados; \texttt{smearsum} es la mejor estrategia clásica.
+\end{exampleblock}
+
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} es la mejor variante y la más simple}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.58\textwidth}
+\begin{block}{Lectura principal}
+\begin{itemize}
+  \item \texttt{lsmear-MG}, \texttt{lsmear-LR} y \texttt{lsmear} muestran el mejor desempeño.
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} reportan los peores resultados.
+  \item \texttt{lsmear-MG} se prefiere por su implementación más simple.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{\texttt{ssum-active} no mejora}
+\begin{itemize}
+  \item Detectar restricciones activas sin ponderarlas no mejora frente a \texttt{ssum}.
+\end{itemize}
+\end{alertblock}
+
+\column{0.42\textwidth}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Variante & Ganancia & Lectura \\
+\midrule
+\texttt{lsmear-MG} & \alert{1.07} & mejor global \\
+\texttt{lsmear-LR} & 1.05 & muy cercana \\
+\texttt{lsmear-LI} & 2.25 & peor desempeño \\
+\texttt{lsmear-LRI} & 1.43 & peor desempeño \\
+\texttt{ssum-active} & 1.42 & sin mejora clara \\
+\texttt{ssum} & 1.43 & referencia \\
+\bottomrule
+\end{tabular}
+\end{columns}
+\end{frame}
+
+\begin{frame}{FeasibleDiving potencia a \texttt{lsmear-MG}}
+\small
+\begin{center}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Estrategia & \texttt{smearsum} & \texttt{smearsumrel} & \texttt{lsmear-MG} & Ganancia \\ \midrule
+\texttt{minLB} & 76\,392 & 29\,136 & \alert{2.03} & 1.63 \\
+\texttt{FeasibleDiving} & 65\,789 & 19\,181 & \alert{2.29} & 1.43 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \texttt{FeasibleDiving} domina a \texttt{minLB} en todas las selecciones de variable.
+  \item \texttt{lsmear-MG} vence a \texttt{smearsum} y \texttt{smearsumrel} con ambos buscadores.
+  \item La mejor combinación es \texttt{lsmear-MG} con \texttt{FeasibleDiving}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} supera las estrategias clásicas}
+\small
+
+\begin{block}{Contexto y problema}
+\begin{itemize}
+  \item \texttt{lsmear} es una nueva estrategia de selección de variables para \texttt{interval-based solvers}.
+  \item Pondera restricciones con multiplicadores de Lagrange óptimos.
+\end{itemize}
+\end{block}
+
+\begin{exampleblock}{Idea del método}
+\begin{itemize}
+  \item La \alert{linealización} del problema calcula los multiplicadores con el método simplex.
+  \item \texttt{lsmear} define una función tipo Lagrangiano y mide su valor de smear.
+  \item \texttt{lsmear-MG} calcula los impactos con las restricciones originales.
+\end{itemize}
+\end{exampleblock}
+
+\begin{alertblock}{Resultado principal y trabajo futuro}
+\begin{itemize}
+  \item \texttt{lsmear} y \texttt{lsmear-MG} superan significativamente a las estrategias clásicas de bisección.
+  \item \texttt{lsmear} es independiente del contractor basado en relajación convexa.
+  \item Futuro: incorporar errores de violación para ponderar variables relacionadas.
+\end{itemize}
+\end{alertblock}
+
+\end{frame}
+
+\end{document}

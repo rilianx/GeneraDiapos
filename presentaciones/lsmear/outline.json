@@ -1,0 +1,184 @@
+{
+  "title": "lsmear: selección de variables con multiplicadores de Lagrange óptimos",
+  "authors": "Ignacio Araya \\and Bertrand Neveu",
+  "venue": "J Glob Optim (2017)",
+  "notation": "\\small\\textbf{Símbolos comunes:} $x\\in\\R^n$ vector de variables; $\\mathbf{x}$ caja actual; $x_i$ intervalo de la variable $i$; $\\mathrm{wid}(x_i)$ ancho de $x_i$; $f$ función objetivo; $g=(g_1,\\dots,g_m)$ restricciones; $\\mathbf{J}_{ji}$ cota intervalar de $\\partial g_j/\\partial x_i$; $\\lambda^*$ multiplicadores duales óptimos; $L$ Lagrangiano; $\\epsilon$ precisión objetivo.",
+  "slides": [
+    {
+      "title": "Problema NCOP con cajas intervalares",
+      "bullets": [
+        "Optimización global continua y determinista bajo restricciones no lineales.",
+        "El dominio se explora con branch and bound sobre cajas.",
+        "La selección de variable decide el tamaño del árbol de búsqueda."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec3",
+        "sec4",
+        "sec5"
+      ]
+    },
+    {
+      "title": "El criterio smear clásico ignora pesos de restricciones",
+      "bullets": [
+        "round-robin no usa información del sistema.",
+        "largest-first ignora la estructura de derivadas.",
+        "smearsum, smearmax y smearsumrel tratan todas las restricciones por igual.",
+        "ViolationTransfer sí pondera, pero exige relajación convexa intrusiva."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec3",
+        "sec6"
+      ]
+    },
+    {
+      "title": "El solver estándar alterna poda y bifurcación",
+      "bullets": [
+        "Selección de caja, bisecado, filtrado y upper bounding.",
+        "La poda actualiza la cota inferior mediante contractors.",
+        "El cuello de botella es elegir bien la siguiente variable."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "alg1",
+        "sec5"
+      ]
+    },
+    {
+      "title": "lsmear pondera restricciones con duales lineales",
+      "bullets": [
+        "Primero linealiza cada restricción por Taylor de primer orden.",
+        "Luego resuelve un problema lineal con límites de caja.",
+        "Después calcula el impacto de cada variable sobre el Lagrangiano ponderado.",
+        "Si falla el LP, cae a smearsum."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec7",
+        "alg2"
+      ]
+    },
+    {
+      "title": "La variante básica usa dos fases",
+      "bullets": [
+        "Fase 1: construir una aproximación lineal alrededor del punto medio.",
+        "Fase 2: medir el impacto de cada variable en el Lagrangiano.",
+        "Los multiplicadores de la relajación lineal reemplazan los del problema original."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec7",
+        "sec6"
+      ]
+    },
+    {
+      "title": "La selección maximiza un smear ponderado",
+      "bullets": [
+        "La derivada intervalar se combina con los duales óptimos.",
+        "El impacto usa el ancho del intervalo de cada variable.",
+        "Se elige la variable con mayor magnitud de impacto."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec7",
+        "alg3"
+      ]
+    },
+    {
+      "title": "Algoritmo lsmear en dos fases",
+      "bullets": [
+        "Construye la linealización y resuelve el LP.",
+        "Calcula D acumulando derivadas intervalares y duales.",
+        "Devuelve la mejor variable; si no hay óptimo, usa smearsum.",
+        "La implementación usa SoPlex para primal y dual."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "alg2",
+        "alg3",
+        "sec7"
+      ]
+    },
+    {
+      "title": "Cuatro variantes aíslan el efecto de cada decisión",
+      "bullets": [
+        "lsmear-MG usa gradiente en el punto medio.",
+        "lsmear-LI usa el Lagrangiano linealizado.",
+        "lsmear-LR toma multiplicadores desde una relajación lineal.",
+        "lsmear-LRI combina relajación lineal e impacto lineal."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec8"
+      ]
+    },
+    {
+      "title": "La evaluación usa IbexOpt y COCONUT",
+      "bullets": [
+        "IbexOpt integra HC4, ACID, AF2, XNewton e inner bounding.",
+        "Se probaron 76 instancias de COCONUT.",
+        "Cada estrategia se ejecutó cinco veces; se reporta el promedio robusto.",
+        "La precisión fijada fue $10^{-6}$."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec9"
+      ]
+    },
+    {
+      "title": "lsmear supera a las estrategias clásicas",
+      "bullets": [
+        "Comparado con rr, lf, smearsum, smearmax y smearsumrel.",
+        "lsmear logra mejor perfil global en la mayoría de instancias.",
+        "El overhead de resolver el LP es pequeño frente al filtrado.",
+        "Mejora media relativa: 2.04 vs rr y 1.30 vs smearsum."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec10",
+        "tab1"
+      ]
+    },
+    {
+      "title": "lsmear-MG y lsmear-LR lideran las variantes",
+      "bullets": [
+        "lsmear-MG, lsmear-LR y lsmear alcanzan los mejores perfiles.",
+        "lsmear-LI y lsmear-LRI son las peores variantes.",
+        "lsmear-MG es preferible: rendimiento similar y menor complejidad.",
+        "ssum-active no mejora a smearsum de forma consistente."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec11",
+        "tab2"
+      ]
+    },
+    {
+      "title": "FeasibleDiving potencia a lsmear-MG",
+      "bullets": [
+        "FeasibleDiving domina a minLB en todas las selecciones de variable.",
+        "lsmear-MG vence a smearsum y smearsumrel con ambos buscadores.",
+        "La ganancia media frente a smearsum alcanza 1.63 con minLB.",
+        "La combinación lsmear-MG + FeasibleDiving es la más sólida."
+      ],
+      "kind": "table",
+      "sources": [
+        "sec12",
+        "tab3"
+      ]
+    },
+    {
+      "title": "La idea final es simple y efectiva",
+      "bullets": [
+        "Ponderar restricciones irrelevantes reduce decisiones de bifurcación malas.",
+        "La linealización local basta para estimar pesos útiles.",
+        "Futuro: incorporar errores de violación sin perder simplicidad."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec13"
+      ]
+    }
+  ]
+}
