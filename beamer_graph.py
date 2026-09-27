@@ -27,6 +27,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import tomllib
 from pathlib import Path
 from typing import Annotated, Literal, TypedDict
@@ -55,7 +56,7 @@ MAX_OUTLINE_ATTEMPTS = 3
 OVERFULL_TOLERANCE_PT = 2.0
 MAX_TEXT_CHARS = 900                # densidad máxima orientativa por diapo
 LATEX_TIMEOUT_S = 60
-N_SLIDES = (10, 16)
+N_SLIDES = (12, 16)
 
 DEFAULT_BASE = Path(__file__).with_name("base.tex")
 DEFAULT_STYLE = Path(__file__).with_name("estilo.toml")
@@ -139,8 +140,24 @@ def _chat(model: str):
     return ChatAnthropic(model=model, max_tokens=8000, max_retries=3)
 
 
+# Consumo de tokens por modelo; las diapositivas se escriben en paralelo.
+USO: dict[str, dict[str, int]] = {}
+_USO_LOCK = threading.Lock()
+
+
+def registrar_uso(model: str, msg) -> None:
+    u = getattr(msg, "usage_metadata", None) or {}
+    with _USO_LOCK:
+        d = USO.setdefault(model, {"llamadas": 0, "entrada": 0, "salida": 0})
+        d["llamadas"] += 1
+        d["entrada"] += u.get("input_tokens", 0)
+        d["salida"] += u.get("output_tokens", 0)
+
+
 def call_text(model: str, prompt: str) -> str:
-    out = _chat(model).invoke(prompt).content
+    msg = _chat(model).invoke(prompt)
+    registrar_uso(model, msg)
+    out = msg.content
     if isinstance(out, list):
         out = "".join(b.get("text", "") for b in out if isinstance(b, dict))
     return strip_fences(out)
@@ -149,8 +166,11 @@ def call_text(model: str, prompt: str) -> str:
 def call_structured(model: str, schema: type[BaseModel], prompt: str) -> BaseModel:
     # function_calling tolera campos opcionales del esquema en ambos proveedores
     kw = {"method": "function_calling"} if PROVIDER == "openai" else {}
-    out = _chat(model).with_structured_output(schema, **kw).invoke(prompt)
-    return schema.model_validate(restaurar_escapes(out.model_dump()))
+    res = _chat(model).with_structured_output(schema, include_raw=True, **kw).invoke(prompt)
+    registrar_uso(model, res["raw"])
+    if res["parsed"] is None:
+        raise res["parsing_error"] or RuntimeError("El modelo no devolvió el esquema pedido")
+    return schema.model_validate(restaurar_escapes(res["parsed"].model_dump()))
 
 
 # En JSON, "\t", "\b", "\f", "\r" y "\n" son escapes: si el modelo escribe \texttt
@@ -662,6 +682,21 @@ def refine_global(state: State) -> dict:
     return {"tex": head + new_body + tail, "global_attempts": state["global_attempts"] + 1}
 
 
+def informe_uso() -> list[str]:
+    if not USO:
+        return []
+    lines = ["\n## Consumo de tokens\n", "| Modelo | Llamadas | Entrada | Salida | Total |",
+             "|---|---|---|---|---|"]
+    tot = {"llamadas": 0, "entrada": 0, "salida": 0}
+    for model, d in sorted(USO.items()):
+        lines.append(f"| {model} | {d['llamadas']} | {d['entrada']:,} | {d['salida']:,} | "
+                     f"{d['entrada'] + d['salida']:,} |")
+        tot = {k: tot[k] + d[k] for k in tot}
+    lines.append(f"| **Total** | {tot['llamadas']} | {tot['entrada']:,} | {tot['salida']:,} | "
+                 f"{tot['entrada'] + tot['salida']:,} |")
+    return lines
+
+
 def write_outputs(state: State) -> dict:
     out = Path(state["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
@@ -678,6 +713,7 @@ def write_outputs(state: State) -> dict:
     for idx, _, status, attempts, warns in sorted(state["frames"]):
         title = state["outline"]["slides"][idx]["title"].replace("|", "/")
         lines.append(f"| {idx} | {title} | {status} | {attempts} | {'; '.join(warns) or '-'} |")
+    lines += informe_uso()
     (out / "informe.md").write_text("\n".join(lines) + "\n")
     return {}
 
@@ -791,6 +827,7 @@ def main() -> None:
         input(f"Guion guardado en {path}. Edítalo si quieres y pulsa Enter para continuar... ")
         result = graph.invoke(Command(resume=json.loads(path.read_text())), config)
 
+    print("\n".join(informe_uso()))
     print(f"Listo: {args.out}/presentacion.pdf (ver {args.out}/informe.md)")
 
 
