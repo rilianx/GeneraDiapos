@@ -50,6 +50,11 @@ def fake_text(model, prompt):
     return r"\begin{frame}{Resultados}Ganancia 1.43, 99.9\%" + wide + r"\end{frame}"
 
 
+# Escapes JSON que el modelo no dobló (\texttt → tab + "exttt") se restauran
+assert bg.restaurar_escapes({"t": ["\texttt{x} \frac{a}{b} \beta \rho \neq 0"]}) == \
+    {"t": [r"\texttt{x} \frac{a}{b} \beta \rho \neq 0"]}
+assert bg.restaurar_escapes("a\n  \\item b") == "a\n  \\item b"   # saltos reales intactos
+
 bg.call_structured, bg.call_text = fake_structured, fake_text
 
 tmp = Path(tempfile.mkdtemp())

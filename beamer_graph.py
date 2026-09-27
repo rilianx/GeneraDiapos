@@ -44,11 +44,11 @@ from langgraph.types import Command, Send, interrupt
 #   LLM_MODEL_OUTLINE / LLM_MODEL_SLIDES: nombres de modelo de tu cuenta
 # El guion es la decisión más importante: usa ahí tu modelo más capaz, y uno más
 # rápido/barato para las N diapositivas y los refinados.
-PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
+PROVIDER = os.environ.get("LLM_PROVIDER") or "openai"
 _DEFAULT_MODELS = {"anthropic": ("claude-opus-5-5", "claude-sonnet-5"),
                    "openai": ("gpt-5.4-mini", "gpt-5.4-mini")}
-MODEL_OUTLINE = os.environ.get("LLM_MODEL_OUTLINE", _DEFAULT_MODELS[PROVIDER][0])
-MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES", _DEFAULT_MODELS[PROVIDER][1])
+MODEL_OUTLINE = os.environ.get("LLM_MODEL_OUTLINE") or _DEFAULT_MODELS[PROVIDER][0]
+MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES") or _DEFAULT_MODELS[PROVIDER][1]
 MAX_SLIDE_ATTEMPTS = 3
 MAX_GLOBAL_ATTEMPTS = 2
 MAX_OUTLINE_ATTEMPTS = 3
@@ -149,7 +149,25 @@ def call_text(model: str, prompt: str) -> str:
 def call_structured(model: str, schema: type[BaseModel], prompt: str) -> BaseModel:
     # function_calling tolera campos opcionales del esquema en ambos proveedores
     kw = {"method": "function_calling"} if PROVIDER == "openai" else {}
-    return _chat(model).with_structured_output(schema, **kw).invoke(prompt)
+    out = _chat(model).with_structured_output(schema, **kw).invoke(prompt)
+    return schema.model_validate(restaurar_escapes(out.model_dump()))
+
+
+# En JSON, "\t", "\b", "\f", "\r" y "\n" son escapes: si el modelo escribe \texttt
+# o \frac sin doblar la barra, llegan como caracteres de control. Se restauran.
+_CONTROL = {"\t": r"\t", "\b": r"\b", "\f": r"\f", "\r": r"\r"}
+_NEWLINE_CMD = re.compile(r"\n(?=(?:abla|eq|eg|ot|oindent|ewline|u|i|leq|geq|mid)(?![A-Za-z]))")
+
+
+def restaurar_escapes(obj):
+    if isinstance(obj, str):
+        obj = _NEWLINE_CMD.sub(lambda _: "\\n", obj)
+        return "".join(_CONTROL.get(c, c) for c in obj)
+    if isinstance(obj, list):
+        return [restaurar_escapes(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: restaurar_escapes(v) for k, v in obj.items()}
+    return obj
 
 
 def strip_fences(s: str) -> str:
