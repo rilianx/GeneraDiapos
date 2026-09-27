@@ -44,11 +44,11 @@ from langgraph.types import Command, Send, interrupt
 #   LLM_MODEL_OUTLINE / LLM_MODEL_SLIDES: nombres de modelo de tu cuenta
 # El guion es la decisión más importante: usa ahí tu modelo más capaz, y uno más
 # rápido/barato para las N diapositivas y los refinados.
-PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
+PROVIDER = os.environ.get("LLM_PROVIDER") or "openai"
 _DEFAULT_MODELS = {"anthropic": ("claude-opus-5-5", "claude-sonnet-5"),
                    "openai": ("gpt-5.4-mini", "gpt-5.4-mini")}
-MODEL_OUTLINE = os.environ.get("LLM_MODEL_OUTLINE", _DEFAULT_MODELS[PROVIDER][0])
-MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES", _DEFAULT_MODELS[PROVIDER][1])
+MODEL_OUTLINE = os.environ.get("LLM_MODEL_OUTLINE") or _DEFAULT_MODELS[PROVIDER][0]
+MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES") or _DEFAULT_MODELS[PROVIDER][1]
 MAX_SLIDE_ATTEMPTS = 3
 MAX_GLOBAL_ATTEMPTS = 2
 MAX_OUTLINE_ATTEMPTS = 3
