@@ -1,0 +1,277 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+
+% Macros disponibles para el modelo: se detectan automáticamente y se le
+% informan en cada diapositiva. Agrega aquí las que necesite cada paper.
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% \texttt{lsmear}: selección de variables con multiplicadores lagrangianos, Ignacio Araya \and Bertrand Neveu y Journal of Global Optimization se rellenan desde el guion.
+% Si los reemplazas a mano, se respetan tal cual.
+\title{\texttt{lsmear}: selección de variables con multiplicadores lagrangianos}
+\subtitle{Journal of Global Optimization}
+\author{Ignacio Araya \and Bertrand Neveu}
+\date{}
+
+\begin{document}
+
+\begin{frame}[plain]
+\titlepage
+\end{frame}
+
+\begin{frame}{Elegir mal la variable multiplica nodos}
+\small
+\begin{block}{Contexto}
+La optimización global continua se resuelve determinísticamente con \textit{branch and bound} por intervalos.
+\end{block}
+
+\begin{alertblock}{Problema}
+La bisección depende de elegir bien la variable; una mala elección multiplica nodos y tiempo.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} pondera restricciones con \alert{pesos}}
+\small
+\begin{block}{Estrategias clásicas}
+  \begin{itemize}
+    \item \texttt{round-robin}: no usa información del sistema.
+    \item \texttt{largest-first}: elige la variable con mayor dominio.
+    \item \texttt{smear-based}: agrega impactos de todas las restricciones.
+  \end{itemize}
+\end{block}
+
+\begin{exampleblock}{Idea de \texttt{lsmear}}
+\[
+D_i=\sum_{j=1}^m \lambda_j^*\,\operatorname{wid}(x_i)\,\max\!\bigl(|J_{ji}|\bigr)
+\]
+La variable se elige por su impacto ponderado en la función de Lagrange.
+\end{exampleblock}
+
+\begin{alertblock}{Limitación común}
+  Tratan todas las restricciones como igualmente importantes.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} evita la intrusión de \texttt{ViolationTransfer}}
+\small
+\begin{block}{Idea común}
+\begin{itemize}
+  \item Ambos usan multipliers duales y una función Lagrangiana.
+  \item Seleccionan la variable con mayor impacto estimado.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Limitación de \texttt{ViolationTransfer}}
+\begin{itemize}
+  \item Requiere reformular la relajación convexa.
+  \item Modifica el contractor y la estrategia del solver.
+\end{itemize}
+\end{alertblock}
+
+\begin{exampleblock}{\texttt{lsmear}: alternativa simple}
+\begin{itemize}
+  \item Usa una linealización de Taylor del problema original.
+  \item Calcula el impacto sin tocar el contractor.
+\end{itemize}
+\end{exampleblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} pondera restricciones con multiplicadores óptimos}
+\small
+\begin{block}{Idea del método}
+\[
+g_j(\mathbf{x}) \approx g_j(\operatorname{mid}(\mathbf{x})) + \operatorname{mid}(J_{j\cdot})\,(\mathbf{x}-\operatorname{mid}(\mathbf{x}))
+\]
+La restricción se linealiza en el punto medio de la caja.
+\[
+\lambda^* \leftarrow \argmin \{\text{LP linealizado}\}
+\]
+El programa lineal estima multiplicadores duales para ponderar restricciones.
+\end{block}
+
+\begin{alertblock}{Mensaje clave}
+Cada restricción contribuye según su importancia dual, no por igual.
+\end{alertblock}
+
+\begin{itemize}
+  \item Se calcula \(\mathcal{L}\) con esos pesos sobre la aproximación lineal.
+  \item \texttt{lsmear} usa \(|D_i|\,\operatorname{wid}(x_i)\) para elegir la variable.
+  \item Si el LP falla o es no acotado, \texttt{lsmear} cae a \texttt{smearsum}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} selecciona en dos fases}
+\small
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja $\mathbf{x}\in\R^n$, Jacobiano intervalar $J$}
+\KwOut{índice $i^*$}
+Resolver el LP con la variable objetivo no acotada\;
+\If{no hay solución óptima o el óptimo es no acotado}{
+  \Return decisión de \texttt{smearsum}\;
+}
+\For{$i=1,\dots,n$}{
+  $D_i \gets \lambda_i^*$\;
+  \For{$j=1,\dots,m$}{
+    $D_i \gets D_i + J_{ji}\lambda_{n+j}^*$\;
+  }
+  $s_i \gets \left|D_i\right|\,\operatorname{wid}(x_i)$\;
+}
+\Return $\argmax_i s_i$\;
+\end{algorithm}
+\end{frame}
+
+\begin{frame}{La evaluación usa IbexOpt y COCONUT}
+\begin{block}{Configuración experimental}
+\small
+\begin{itemize}
+  \item Implementamos \texttt{lsmear} y variantes en \texttt{IbexOpt}, con \texttt{HC4}, \texttt{ACID(HC4)} y relajación lineal.
+  \item La selección de nodos usa \texttt{FeasibleDiving}; la precisión fija es $\epsilon=10^{-6}$.
+  \item Evaluamos 76 instancias de \texttt{COCONUT}, corridas cinco veces por estrategia.
+  \item Reportamos el promedio tras eliminar el mejor y el peor tiempo por instancia.
+\end{itemize}
+\end{block}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} supera a las estrategias clásicas}
+\small
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Estrategia & Mejora media relativa & Tiempo total (s) \\
+\midrule
+\texttt{rr} & 2.04 & 21\,035 \\
+\texttt{lf} & 2.48 & 19\,181 \\
+\texttt{smax} & 1.34 & 20\,429 \\
+\texttt{ssum} & 1.30 & \alert{19\,181} \\
+\texttt{ssr} & 1.32 & 20\,429 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \alert{\texttt{lsmear}} logra la mejor mejora media relativa frente a las cinco referencias.
+  \item Casi 90\% de las instancias se resuelven en menos de dos veces el mejor tiempo.
+  \item En la muestra, \texttt{ssum} obtiene el mejor tiempo total entre las estrategias clásicas.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} lidera en tiempo en varias instancias}
+\small
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Instancia & \texttt{lsmear} & \texttt{lsmear-MG} & \texttt{lsmear-LR} \\
+\midrule
+\texttt{hs087} & 0.6 s, 65 nodos & 0.6 s, \alert{46 nodos} & 5.7 s, 953 nodos \\
+\texttt{harker} & \alert{1071 s} & 1514 s & 3865 s \\
+\texttt{linear} & 137 s & \alert{25 s} & 115 s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{block}{El mejor tiempo depende de la instancia}
+\begin{itemize}
+  \item \texttt{hs087}: \texttt{lsmear} y \texttt{lsmear-MG} empatan en tiempo.
+  \item \texttt{harker}: \texttt{lsmear} es más rápido.
+  \item \texttt{linear}: \texttt{lsmear-MG} es más rápido.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{\texttt{lsmear-LR} queda sistemáticamente detrás}
+\begin{itemize}
+  \item Pierde en tiempo frente a las otras dos variantes.
+  \item Usa muchas más cajas en \texttt{hs087} y \texttt{harker}.
+\end{itemize}
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} es la mejor variante práctica}
+\small
+\begin{block}{Desempeño global}
+\begin{itemize}
+  \item \texttt{lsmear-MG}, \texttt{lsmear} y \texttt{lsmear-LR} muestran el mejor rendimiento.
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} reportan los peores resultados.
+  \item \texttt{ssum-active} apenas mejora frente a \texttt{ssum}.
+\end{itemize}
+\end{block}
+
+\begin{exampleblock}{Ganancia media de \texttt{lsmear-MG}}
+\[
+1.07\ (\texttt{lsmear}),\; 1.05\ (\texttt{lsmear-LR}),\; 2.25\ (\texttt{lsmear-LI})
+\]
+\[
+1.43\ (\texttt{lsmear-LRI}),\; 1.42\ (\texttt{ssum-active}),\; 1.43\ (\texttt{ssum})
+\]
+Mide cuánto supera \texttt{lsmear-MG} a cada estrategia de referencia.
+\end{exampleblock}
+
+\begin{alertblock}{Elección recomendada}
+\texttt{lsmear-MG} se prefiere por simplicidad y porque evita modificar el contractor.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{FeasibleDiving} mejora el tiempo promedio}
+\small
+
+\begin{center}
+\begin{tabular}{@{}lccc c@{}}
+\toprule
+Estrategia & \texttt{ssum} & \texttt{ssumrel} & \texttt{lsmear-MG} & Ganancia \\
+\midrule
+\texttt{minLB} & 59,274 & 76,392 & 29,136 & 2.03 \\
+\texttt{FeasibleDiving} & 43,867 & 65,789 & \alert{19,181} & 2.29 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \texttt{FeasibleDiving} supera a \texttt{minLB} en las tres estrategias de selección.
+  \item \texttt{lsmear-MG} supera a \texttt{ssum} y \texttt{ssumrel} con ambas búsquedas.
+  \item 19,181 es el tiempo total de \texttt{lsmear-MG} con \texttt{FeasibleDiving}.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} pesa restricciones con multipliers duales}
+\small
+\begin{block}{Idea}
+\begin{itemize}
+  \item \texttt{lsmear} estima pesos con una linealización de Taylor y \textit{multipliers} duales óptimos.
+  \item Usa esa estimación para ponderar las restricciones en la función lagrangiana local.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Mensaje clave}
+\begin{itemize}
+  \item \texttt{lsmear} y \texttt{lsmear-MG} mejoran a \texttt{ViolationTransfer}.
+  \item \texttt{lsmear-MG} es más simple de implementar: no modifica el \textit{contractor}.
+  \item El costo del LP es pequeño frente al \textit{pruning} del \texttt{solver}.
+\end{itemize}
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} mejora el branching sin intrusión}
+\small
+\begin{block}{Idea central}
+\texttt{lsmear} pondera las restricciones con los multiplicadores óptimos de una linealización y calcula un smear tipo Lagrangiano.
+\end{block}
+
+\begin{itemize}
+  \item \texttt{lsmear} y \texttt{lsmear-MG} superan todas las estrategias clásicas de bisección.
+  \item \texttt{lsmear-MG} usa las restricciones originales para medir el impacto de las variables.
+  \item Frente a \texttt{lsmear-LRI}, mejora el cálculo del impacto tras obtener los valores duales.
+  \item A diferencia de \texttt{ViolationTransfer}, no modifica el contractor ni la estrategia global.
+  \item Futuro: incorporar errores de violación y evaluar variables ligadas solo a restricciones lineales.
+\end{itemize}
+\end{frame}
+
+\end{document}

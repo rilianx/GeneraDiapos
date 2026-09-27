@@ -1,0 +1,190 @@
+{
+  "title": "\\texttt{lsmear}: selección de variables con multiplicadores lagrangianos",
+  "authors": "Ignacio Araya \\and Bertrand Neveu",
+  "venue": "Journal of Global Optimization",
+  "notation": "\\small Sea $\\mathbf{x}\\in\\R^n$ el box actual y $x_i$ su $i$-ésima variable. Denotamos $\\operatorname{wid}(x_i)$ y $\\operatorname{mid}(x_i)$ por ancho y punto medio. $f$ es la función objetivo, $g_j$ las restricciones, $J_{ji}$ una cota intervalar de $\\partial g_j/\\partial x_i$, $\\lambda^*$ los multiplicadores duales óptimos, $D_i$ el peso agregado, $\\mathcal{L}$ la función lagrangiana, y $UB$, $LB$, $\\epsilon$ los límites superior, inferior y la precisión.",
+  "slides": [
+    {
+      "title": "\\texttt{lsmear} mejora la elección de variables",
+      "bullets": [
+        "Método de selección para solvers de branch-and-bound intervalar.",
+        "Repondera restricciones con multiplicadores lagrangianos óptimos.",
+        "Mantiene la filosofía smear, pero con pesos informados por el modelo.",
+        "Reporta mejoras significativas sobre estrategias clásicas y variantes cercanas."
+      ],
+      "kind": "title",
+      "sources": []
+    },
+    {
+      "title": "El problema es elegir bien qué variable partir",
+      "bullets": [
+        "Optimización global continua y determinista con restricciones no convexas.",
+        "El solver explora cajas, poda con contractors y bisecciona una variable.",
+        "Una mala elección de variable puede multiplicar nodos y tiempo.",
+        "La meta es encontrar una solución $\\epsilon$-óptima o certificar inviabilidad."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec3",
+        "sec4",
+        "sec5"
+      ]
+    },
+    {
+      "title": "Las heurísticas clásicas tratan todas las restricciones igual",
+      "bullets": [
+        "Round-robin ignora el modelo y depende del orden inicial.",
+        "Largest-first prioriza la variable con mayor ancho de dominio.",
+        "Smear-based combina derivadas e intervalos, pero sin ponderar restricciones.",
+        "La debilidad común es no distinguir restricciones activas e inactivas."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec3",
+        "sec2"
+      ]
+    },
+    {
+      "title": "ViolationTransfer inspira, pero no es suficiente",
+      "bullets": [
+        "Usa la función lagrangiana y valores duales de una relajación.",
+        "Requiere reformular el problema y modificar el contractor del solver.",
+        "\\texttt{lsmear} evita esa intrusión y trabaja con una linealización simple.",
+        "Su variante cercana \\texttt{lsmear-LRI} rinde peor en los experimentos."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec3",
+        "sec8",
+        "sec13"
+      ]
+    },
+    {
+      "title": "La idea central es ponderar restricciones relevantes",
+      "bullets": [
+        "Linealizar cada restricción en el punto medio de la caja.",
+        "Resolver un programa lineal para obtener multiplicadores duales óptimos.",
+        "Usar esos pesos en una función smear sobre la lagrangiana aproximada.",
+        "Si el LP falla, caer a \\texttt{smearsum} como respaldo."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec7",
+        "sec6",
+        "alg2",
+        "alg3"
+      ]
+    },
+    {
+      "title": "La selección se implementa en dos fases",
+      "bullets": [
+        "Fase 1: construir la linealización y resolver el LP.",
+        "Fase 2: calcular el impacto de cada variable con $D_i$.",
+        "Elegir la variable con mayor $|D_i\\,\\operatorname{wid}(x_i)|$.",
+        "Si no hay óptimo dual, devolver la decisión de \\texttt{smearsum}."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "alg2",
+        "alg3"
+      ]
+    },
+    {
+      "title": "La evaluación usa IbexOpt y COCONUT",
+      "bullets": [
+        "Implementación en \\texttt{IbexOpt}, con \\texttt{HC4}, \\texttt{ACID(HC4)} y relajación lineal.",
+        "Búsqueda de nodos: \\texttt{FeasibleDiving}; precisión: $10^{-6}$.",
+        "76 instancias de COCONUT, ejecutadas cinco veces por estrategia.",
+        "Se reporta el promedio tras eliminar el mejor y peor tiempo."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec9"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear} domina a las estrategias clásicas",
+      "bullets": [
+        "Frente a \\texttt{rr}, \\texttt{lf}, \\texttt{ssum}, \\texttt{smax} y \\texttt{ssr}.",
+        "Mejora media relativa: 2.04, 2.48, 1.34, 1.30 y 1.32.",
+        "Casi 90\\% de instancias se resuelven en menos del doble del mejor tiempo.",
+        "En la muestra, \\texttt{lsmear} reduce tiempo y nodos frente a las baselines."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab2",
+        "sec10"
+      ]
+    },
+    {
+      "title": "Los números por instancia muestran la ganancia",
+      "bullets": [
+        "\\texttt{hs087}: 0.6 s y 65 nodos, mejor que \\texttt{ssum} y \\texttt{ssr}.",
+        "\\texttt{harker}: 1071 s, frente a 1514 y 3865 s en las variantes.",
+        "\\texttt{linear}: 25 s con \\texttt{lsmear-MG}, frente a 137 s en \\texttt{lsmear}.",
+        "La ganancia puede ser muy grande en instancias difíciles."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab2"
+      ]
+    },
+    {
+      "title": "\\texttt{lsmear-MG} es la mejor variante práctica",
+      "bullets": [
+        "\\texttt{lsmear-MG}, \\texttt{lsmear} y \\texttt{lsmear-LR} muestran el mejor desempeño global.",
+        "\\texttt{lsmear-LI} y \\texttt{lsmear-LRI} son consistentemente peores.",
+        "Detectar restricciones activas sin ponderarlas no basta: \\texttt{ssum-active} apenas cambia.",
+        "\\texttt{lsmear-MG} se prefiere por simplicidad e implementación no intrusiva."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec8",
+        "sec11"
+      ]
+    },
+    {
+      "title": "La estrategia de búsqueda también importa",
+      "bullets": [
+        "\\texttt{FeasibleDiving} supera sistemáticamente a \\texttt{minLB}.",
+        "Aun así, \\texttt{lsmear-MG} mejora a \\texttt{ssum} y \\texttt{ssumrel} en ambos casos.",
+        "Con \\texttt{minLB}, la ganancia media de \\texttt{lsmear-MG} frente a \\texttt{ssum} es 1.63.",
+        "Con \\texttt{FeasibleDiving}, la ganancia media frente a \\texttt{ssum} es 1.43."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab3",
+        "sec12"
+      ]
+    },
+    {
+      "title": "La linealización barata basta para guiar el branching",
+      "bullets": [
+        "No hace falta una relajación convexa sofisticada para estimar pesos útiles.",
+        "La clave está en resaltar restricciones activas y su impacto local.",
+        "\\texttt{lsmear} y \\texttt{lsmear-MG} superan a \\texttt{ViolationTransfer} en espíritu y simplicidad.",
+        "El costo extra de resolver el LP es pequeño frente al pruning del solver."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec7",
+        "sec10",
+        "sec11",
+        "sec13"
+      ]
+    },
+    {
+      "title": "La conclusión es mejorar el branching sin intrusión",
+      "bullets": [
+        "\\texttt{lsmear} reinterpreta smear con información dual de una linealización.",
+        "\\texttt{lsmear-MG} es la variante recomendada por desempeño y simplicidad.",
+        "Futuro: incorporar violación de restricciones para ponderar aún mejor.",
+        "También interesa explorar qué variables lineales no deberían partirse."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec13"
+      ]
+    }
+  ]
+}
