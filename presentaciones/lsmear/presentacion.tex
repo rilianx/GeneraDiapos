@@ -1,0 +1,247 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+
+% Macros disponibles para el modelo: se detectan automáticamente y se le
+% informan en cada diapositiva. Agrega aquí las que necesite cada paper.
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% lsmear: selección de variables con multiplicadores de Lagrange, Ignacio Araya \and Bertrand Neveu y J\ Glob\ Optim\ (2017) se rellenan desde el guion.
+% Si los reemplazas a mano, se respetan tal cual.
+\title{lsmear: selección de variables con multiplicadores de Lagrange}
+\subtitle{J\ Glob\ Optim\ (2017)}
+\author{Ignacio Araya \and Bertrand Neveu}
+\date{}
+
+\begin{document}
+
+\begin{frame}[plain]
+\titlepage
+\end{frame}
+
+\begin{frame}{Elegir la variable impacta el árbol de búsqueda}
+\small
+\begin{block}{NCOP y solver intervalar}
+Minimiza \(f(x)\) sujeto a \(g(x)\le 0\); el solver trabaja con cajas \(\mathbf{x}\).
+\end{block}
+
+\begin{itemize}
+  \item La poda combina filtrado y acotación sobre cada caja.
+  \item La bisección define el árbol de búsqueda y su crecimiento.
+  \item \alert{La estrategia de branching influye en el rendimiento.}
+\end{itemize}
+
+\begin{alertblock}{Limitación}
+Un \texttt{round-robin} con orden inicial malo puede degradar el rendimiento.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{Heurísticas clásicas: selección de variables}
+\small
+\begin{columns}[T]
+\column{0.48\textwidth}
+\begin{block}{\texttt{round-robin}}
+\begin{itemize}
+  \item No usa información del sistema.
+  \item Recorre las variables en ciclo.
+\end{itemize}
+\end{block}
+
+\column{0.48\textwidth}
+\begin{block}{\texttt{largest-first}}
+\begin{itemize}
+  \item Elige la variable con mayor dominio.
+  \item Supone mayor impacto para anchos grandes.
+\end{itemize}
+\end{block}
+\end{columns}
+
+\begin{block}{\texttt{smear}-based}
+\begin{itemize}
+  \item Usa derivadas y anchos para estimar el impacto.
+  \item Selecciona la variable con mayor valor agregado.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Limitación clave}
+No pondera la importancia de cada restricción.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{ViolationTransfer} usa una relajación lineal}
+\small
+\begin{columns}[T]
+\column{0.50\textwidth}
+\textbf{Familia \texttt{smear}}
+\begin{itemize}
+  \item \texttt{smearsum}, \texttt{smearmax} y \texttt{smearsumrel} agregan impactos locales.
+  \item Buscan aproximar la influencia global de cada variable.
+  \item \texttt{lsmear} conserva la intuición y usa una linealización simple.
+\end{itemize}
+
+\column{0.50\textwidth}
+\textbf{\texttt{ViolationTransfer}}
+\begin{itemize}
+  \item Trabaja con la función Lagrangiana de una relajación del problema.
+  \item Pesa restricciones con multiplicadores duales óptimos.
+  \item Estima qué variable puede mejorar más el problema.
+\end{itemize}
+\end{columns}
+
+\begin{alertblock}{Mensaje clave}
+\texttt{lsmear} evita una relajación convexa sofisticada y usa una aproximación lineal simple.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} usa duales para ponderar restricciones}
+\small
+\begin{block}{Idea}
+\begin{itemize}
+  \item Linealiza cada \(g_j(\mathbf{x})\) alrededor del punto medio de la caja.
+  \item Resuelve el programa lineal aproximado y obtiene \(\lambda^*\).
+  \item Usa esos duales para ponderar la Lagrangiana aproximada.
+  \item Selecciona la variable con mayor impacto en \(L(\mathbf{x})\).
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Mensaje clave}
+No pondera todas las restricciones igual: usa una estimación de su importancia dual.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} selecciona con smear ponderado}
+\small
+\begin{block}{Idea central}
+\[
+D_i=\lambda_i^*+\sum_j \lambda_{n+j}^*\,J_{ji}
+\]
+\[
+|D_i|\,\mathrm{wid}(\mathbf{x}_i)\ \text{mide el impacto de cada variable.}
+\]
+\end{block}
+
+\begin{itemize}
+  \item \alert{\texttt{lsmear} estima multiplicadores de Lagrange óptimos.}
+  \item \(D_i\) combina la cota de la variable con las restricciones linealizadas.
+  \item Si el LP falla o es no acotado, \texttt{smearsum} toma el relevo.
+  \item La linealización del problema global produce una aproximación del problema original.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{El algoritmo separa linealización y decisión}
+\small
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja actual $\mathbf{x}$, Jacobiano intervalar $\mathbf{J}$, restricciones $g$}
+\KwOut{variable a bisectar}
+linearizar $g_j(\mathbf{x})$ alrededor de $\mathrm{mid}(\mathbf{x})$\;
+fijar la cota del objetivo como no acotada en el LP\;
+resolver el LP con \texttt{SoPlex} y obtener $\lambda^*$\;
+\If{$\lambda^*=\emptyset$ o el óptimo es no acotado}{\Return \texttt{smearsum}$(\mathbf{x},\mathbf{J})$\;}
+\For{$i\in\{1,\dots,n\}$}{
+  $D \gets \lambda_i^*$\;
+  \For{$j\in\{1,\dots,m\}$}{
+    $D \gets D + \lambda_{n+j}^*\, J_{ji}$\;
+  }
+  medir $|D\,\mathrm{wid}(\mathbf{x}_i)|$ y conservar el máximo\;
+}
+\Return la variable con mayor impacto\;
+\end{algorithm}
+\end{frame}
+
+\begin{frame}{Los experimentos usan \texttt{IbexOpt} y COCONUT}
+\small
+\begin{itemize}
+  \item \texttt{IbexOpt} implementa \texttt{lsmear} con contratos HC4, ACID y lineal.
+  \item La búsqueda de cajas usa \texttt{FeasibleDiving}; \(\epsilon=10^{-6}\).
+  \item Servidor \texttt{PowerEdge T420}: dos \texttt{Xeon} 2.20 GHz, 8 GB RAM.
+  \item Se evaluaron 76 instancias de COCONUT.
+  \item Cada estrategia se ejecutó cinco veces por instancia.
+\end{itemize}
+\end{frame}
+
+% TODO: la diapositiva 8 no compiló tras 3 intentos
+\begin{frame}{lsmear supera a las heurísticas clásicas}
+\alert{Diapositiva pendiente de revisión}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} es la variante preferida}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.52\textwidth}
+\begin{block}{Idea principal}
+\begin{itemize}
+  \item \texttt{lsmear-MG} lineariza con el gradiente en el punto medio.
+  \item Su rendimiento es comparable al de \texttt{lsmear-LR}.
+\end{itemize}
+\end{block}
+
+\column{0.48\textwidth}
+\begin{alertblock}{Limitación clave}
+\begin{itemize}
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} empeoran al usar la Lagrangiana lineal.
+  \item \texttt{ssum-active} no mejora frente a \texttt{ssum}.
+\end{itemize}
+\end{alertblock}
+\end{columns}
+
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Instancia & \texttt{lsmear} & \texttt{lsmear-MG} & \texttt{lsmear-LR} \\
+\midrule
+hs087 & \textbf{0.6} & \textbf{0.6} & 5.7 \\
+bearing & \textbf{15} & 16 & 57 \\
+harker & \textbf{1071} & 1514 & 3865 \\
+immun & 9.3 & 8.6 & \textbf{5.0} \\
+linear & 137 & \textbf{25} & 115 \\
+total time & 21{,}035 & \textbf{19{,}181} & 20{,}429 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{frame}
+
+% TODO: la diapositiva 10 no compiló tras 3 intentos
+\begin{frame}{La estrategia de búsqueda también importa}
+\alert{Diapositiva pendiente de revisión}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} supera a las estrategias clásicas}
+\small
+\begin{block}{Resultado principal}
+\begin{itemize}
+  \item \texttt{lsmear} claramente supera a \texttt{rr}, \texttt{lf}, \texttt{ssum}, \texttt{smax} y \texttt{ssr}.
+  \item \texttt{lsmear} resuelve casi 90\% de las instancias en menos de dos veces el mejor tiempo.
+  \item La sobrecarga de resolver el LP es \emph{negligible} frente al contractor de poda.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Clave práctica}
+\texttt{lsmear-MG} es la variante preferida: rinde muy bien y no requiere modificar el contractor.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{Futuro: integrar \texttt{ViolationTransfer}}
+\small
+\begin{block}{Idea central}
+\texttt{ViolationTransfer} usaría errores de violación para ponderar variables.
+\end{block}
+
+\begin{alertblock}{Limitación pendiente}
+\begin{itemize}
+\item Variables solo lineales: quizá no conviene bisectarlas.
+\item Los contractors lineales ya reducen óptimamente esos dominios.
+\item La bisección indirecta podría ayudar en restricciones no lineales.
+\end{itemize}
+\end{alertblock}
+\end{frame}
+
+\end{document}
