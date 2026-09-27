@@ -54,6 +54,9 @@ MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES") or _DEFAULT_MODELS[PROVIDER][1
 # El guion es la decisión que más pesa; las diapos van sin razonamiento extra.
 REASONING_OUTLINE = os.environ.get("LLM_REASONING_OUTLINE") or "medium"
 REASONING_SLIDES = os.environ.get("LLM_REASONING_SLIDES") or None
+# Revisor de afirmaciones por diapositiva (juez LLM contra los fragmentos fuente)
+MODEL_REVIEW = os.environ.get("LLM_MODEL_REVIEW") or MODEL_SLIDES
+REASONING_REVIEW = os.environ.get("LLM_REASONING_REVIEW") or "low"
 MAX_SLIDE_ATTEMPTS = 3
 MAX_GLOBAL_ATTEMPTS = 2
 MAX_OUTLINE_ATTEMPTS = 3
@@ -188,6 +191,21 @@ class Outline(BaseModel):
     slides: list[SlideSpec]
 
 
+class Claim(BaseModel):
+    afirmacion: str
+    veredicto: str = Field(description="respaldada | no_respaldada | contradicha")
+    evidencia: str = Field(description="cita breve de la fuente, o por qué no hay respaldo")
+
+    @field_validator("veredicto")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return v.strip().lower().replace(" ", "_")
+
+
+class Review(BaseModel):
+    claims: list[Claim]
+
+
 FrameResult = tuple[int, str, str, int, list[str]]  # (idx, frame, status, intentos, avisos)
 
 
@@ -221,6 +239,7 @@ class SlideState(TypedDict, total=False):
     limits: dict
     damaged: list[str]      # tablas citadas que la extracción dejó dañadas
     style_errors: list[str]
+    fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
     frame: str
     errors: list[str]
     warnings: list[str]
@@ -406,7 +425,8 @@ def _ordenar_tablas_md(text: str, chunks: dict[str, str]) -> str:
         new = f"tab{g['num']}"
         md = "\n".join(tabs[i] for i in g["ids"])
         head = f"Table {g['num']}" + (f": {g['caption']}" if g["caption"] else "")
-        chunks[new] = head + "\n" + (TABLA_DANADA + "\n" if tabla_danada(md) else "") + md
+        # una tabla rota solo confunde al modelo: se deja el aviso y no su contenido
+        chunks[new] = head + "\n" + (TABLA_DANADA if tabla_danada(md) else md)
         for k, old in enumerate(g["ids"]):
             text = text.replace(f" [{old}] ", f" [@{new}] " if k == 0 else " ", 1)
     return text.replace("[@tab", "[tab")
@@ -566,17 +586,33 @@ def kind_check(frame: str, kind: str, sources: list[str], damaged: tuple = ()) -
     return errs + filas_repetidas(body)
 
 
+def _sin_colspec(tab: str) -> str:
+    """Quita \\begin{tabular}{colspec}, que puede tener llaves anidadas (@{})."""
+    i = tab.index("}") + 1                       # fin de \\begin{tabular}
+    if i < len(tab) and tab[i] == "{":
+        depth = 0
+        for j in range(i, len(tab)):
+            depth += {"{": 1, "}": -1}.get(tab[j], 0)
+            if depth == 0:
+                return tab[j + 1:]
+    return tab[i:]
+
+
 def filas_repetidas(body: str) -> list[str]:
     """Filas de tabla con exactamente los mismos números: señal de datos copiados/inventados."""
     errs = []
     for tab in re.findall(r"\\begin\{tabular\*?\}.*?\\end\{tabular\*?\}", body, re.S):
         seen: dict[tuple, str] = {}
+        tab = _sin_colspec(tab)
         for row in tab.split(r"\\"):
             cells = row.split("&")
             nums = tuple(re.findall(r"\d[\d.,]*", "&".join(cells[1:])))
+            name = re.sub(r"\\[a-zA-Z]+|[{}]", "", cells[0]).split("\n")[-1].strip()
+            if len(cells) > 1 and all(re.fullmatch(r"\s*(?:--+|—|-|n/?a|)\s*", c) for c in cells[1:]):
+                errs.append(f"La fila '{name}' no tiene datos: omítela en vez de rellenarla con guiones")
+                continue
             if len(nums) < 2:
                 continue
-            name = re.sub(r"\\[a-zA-Z]+|[{}]", "", cells[0]).split("\n")[-1].strip()
             if nums in seen:
                 errs.append(f"Las filas '{seen[nums]}' y '{name}' de la tabla tienen los mismos números: "
                             "no copies filas; incluye solo elementos con datos en la fuente")
@@ -677,7 +713,7 @@ Reglas:
 - Usa solo información del CONTEXTO. No inventes cifras ni resultados.
 - Tablas: solo filas y columnas que existan en una tabla del CONTEXTO o cifras explícitas del \
 texto. Si un elemento no tiene datos, NO inventes ni copies su fila: omítelo o arma la tabla con \
-las cifras del texto. No crees columnas agregadas (mejor/peor, promedios) que la fuente no tenga. \
+las cifras del texto; nunca dejes filas con "--". No crees columnas agregadas (mejor/peor, promedios) que la fuente no tenga. \
 Respeta qué mide cada cifra (p. ej. "ganancia frente al mejor competidor" no es "frente a X").
 - Debe caber en una pantalla. Si el contenido es mucho, prioriza y resume.
 
@@ -705,8 +741,11 @@ Errores del compilador (las líneas son relativas al frame):
 Reglas de estilo incumplidas:
 {style_errors}
 
+Afirmaciones sin respaldo en la fuente (corrígelas según el CONTEXTO o elimínalas):
+{fact_errors}
+
 Para desbordes o exceso de contenido: acorta, fusiona o elimina lo menos importante.
-No cambies el contenido factual. Respeta la guía y los límites:
+No cambies el contenido factual respaldado. Respeta la guía y los límites:
 {guide}
 Límites: {limits}
 Macros disponibles: {macros}
@@ -716,6 +755,24 @@ FRAME:
 {frame}
 
 CONTEXTO (para verificar datos):
+{context}"""
+
+REVIEW_SLIDE_PROMPT = r"""Eres un revisor exigente. Verifica esta diapositiva contra el CONTEXTO, que \
+es la única fuente válida (fragmentos del paper).
+
+Enumera cada afirmación verificable de la diapositiva, incluido el título: hechos, cifras y a \
+qué método/métrica/configuración corresponden, comparaciones, causas y conclusiones. Omite \
+frases puramente introductorias. Para cada una da un veredicto:
+- respaldada: la fuente la dice o se deduce directamente.
+- no_respaldada: la fuente no la contiene (p. ej. trabajo futuro o extensiones inventadas).
+- contradicha: la fuente dice otra cosa (cifra atribuida al método o métrica equivocada, \
+trabajo futuro presentado como hecho, dirección de una comparación invertida).
+En evidencia cita brevemente la fuente o explica la discrepancia. Ignora el formato LaTeX.
+
+DIAPOSITIVA:
+{frame}
+
+CONTEXTO:
 {context}"""
 
 REFINE_GLOBAL_PROMPT = r"""El cuerpo de esta presentación Beamer compila bien diapositiva por
@@ -886,7 +943,7 @@ def fan_out(state: State) -> list[Send]:
         "idx": i, "spec": s, "head": state["head"], "notation": o["notation"],
         "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": "\n\n".join(chunks[c] for c in s["sources"]),
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
-        "attempts": 0, "errors": [], "style_errors": [], "warnings": [],
+        "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "warnings": [],
     }) for i, s in enumerate(o["slides"])]
 
 
@@ -953,7 +1010,8 @@ def write_outputs(state: State) -> dict:
     lines.append("\n| # | Diapositiva | Estado | Intentos | Avisos |\n|---|---|---|---|---|")
     for idx, _, status, attempts, warns in sorted(state["frames"]):
         title = state["outline"]["slides"][idx]["title"].replace("|", "/")
-        lines.append(f"| {idx} | {title} | {status} | {attempts} | {'; '.join(warns) or '-'} |")
+        warns = [" ".join(w.replace("|", "/").split()) for w in warns]   # una celda de tabla md
+        lines.append(f"| {idx} | {title} | {status} | {attempts} | {'<br>'.join(warns) or '-'} |")
     lines += informe_uso()
     (out / "informe.md").write_text("\n".join(lines) + "\n")
     return {}
@@ -988,6 +1046,22 @@ def compile_slide(s: SlideState) -> dict:
 def route_slide(s: SlideState) -> str:
     if (s["errors"] or s["style_errors"]) and s["attempts"] < MAX_SLIDE_ATTEMPTS:
         return "refine_slide"
+    if s["errors"] or s["spec"]["kind"] == "title":
+        return "finish_slide"
+    return "review_slide"                       # compila: se revisan las afirmaciones
+
+
+def review_slide(s: SlideState) -> dict:
+    r = call_structured(MODEL_REVIEW, Review, effort=REASONING_REVIEW,
+                        prompt=REVIEW_SLIDE_PROMPT.format(frame=s["frame"], context=s["context"]))
+    bad = [f"{c.veredicto}: «{c.afirmacion}» ({c.evidencia})"
+           for c in r.claims if c.veredicto in ("no_respaldada", "contradicha")]
+    return {"fact_errors": bad}
+
+
+def route_review(s: SlideState) -> str:
+    if s["fact_errors"] and s["attempts"] < MAX_SLIDE_ATTEMPTS:
+        return "refine_slide"
     return "finish_slide"
 
 
@@ -995,6 +1069,7 @@ def refine_slide(s: SlideState) -> dict:
     frame = call_text(MODEL_SLIDES, REFINE_SLIDE_PROMPT.format(
         errors="\n".join(s["errors"]) or "ninguno",
         style_errors="\n".join(s["style_errors"]) or "ninguna",
+        fact_errors="\n".join(s.get("fact_errors", [])) or "ninguna",
         guide=s["style_guide"], limits=describe_limits(s["limits"]),
         macros=s["macros"], frame=s["frame"], context=s["context"]))
     return {"frame": frame, "attempts": s["attempts"] + 1}
@@ -1002,7 +1077,9 @@ def refine_slide(s: SlideState) -> dict:
 
 def finish_slide(s: SlideState) -> dict:
     status = "failed" if s["errors"] else "ok"   # el estilo nunca descarta una diapo que compila
-    warns = [f"Estilo: {e}" for e in s["style_errors"]]
+    warns = [f"Compilación: {e}" for e in s["errors"]]
+    warns += [f"Estilo: {e}" for e in s["style_errors"]]
+    warns += [f"Revisor: {e}" for e in s.get("fact_errors", [])]
     warns += soft_checks(s["frame"], s["context"] + "\n" + json.dumps(s["spec"]))
     return {"frames": [(s["idx"], s["frame"], status, s["attempts"], warns)]}
 
@@ -1014,10 +1091,12 @@ def build_slide_graph():
     g.add_node("write_slide", write_slide)
     g.add_node("compile_slide", compile_slide)
     g.add_node("refine_slide", refine_slide)
+    g.add_node("review_slide", review_slide)
     g.add_node("finish_slide", finish_slide)
     g.add_edge(START, "write_slide")
     g.add_edge("write_slide", "compile_slide")
-    g.add_conditional_edges("compile_slide", route_slide, ["refine_slide", "finish_slide"])
+    g.add_conditional_edges("compile_slide", route_slide, ["refine_slide", "review_slide", "finish_slide"])
+    g.add_conditional_edges("review_slide", route_review, ["refine_slide", "finish_slide"])
     g.add_edge("refine_slide", "compile_slide")
     g.add_edge("finish_slide", END)
     return g.compile()

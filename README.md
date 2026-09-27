@@ -96,6 +96,7 @@ Con `--review` el pipeline se detiene tras el guion, lo guarda en
 |---|---|---|
 | Proveedor y modelos | variables `LLM_PROVIDER`, `LLM_MODEL_OUTLINE`, `LLM_MODEL_SLIDES` | por defecto OpenAI; los nombres por defecto pueden quedar obsoletos, usa los de tu cuenta |
 | Razonamiento del guion | variable `LLM_REASONING_OUTLINE` | `low`, `medium` (por defecto) o `high`; solo OpenAI. `LLM_REASONING_SLIDES` hace lo mismo para las diapos (por defecto, sin razonamiento extra) |
+| Revisor de afirmaciones | variables `LLM_MODEL_REVIEW` (por defecto el de diapos) y `LLM_REASONING_REVIEW` (por defecto `low`) | cada diapo que compila se verifica contra sus fragmentos; lo no respaldado se refina y, si persiste, queda en `informe.md` |
 | Preámbulo, tema, macros | `base.tex` | debe tener exactamente un `%%SLIDES%%` |
 | Título/autores | `<<TITLE>>`, `<<AUTHORS>>`, `<<VENUE>>` en `base.tex` | se rellenan desde el guion; si los escribes a mano se respetan |
 | Reglas de estilo | `estilo.toml` | `[guia]` va al prompt; `[limites]` se verifica en código |
@@ -165,6 +166,7 @@ Opciones de la CLI: `python beamer_graph.py --help`.
       intento, refinados promedio, avisos de cifras.
 - [ ] Notas del presentador con `\note{}`.
 - [ ] Nodo de coherencia narrativa que lea todos los títulos en orden.
+- [x] Revisor LLM de afirmaciones contra la fuente (`review_slide`).
 - [ ] Juez LLM para reglas no medibles (títulos que afirman, una idea por diapo).
 
 ## Costes y cuentas

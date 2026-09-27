@@ -26,7 +26,8 @@ para el flujo completo y las decisiones de diseño.
 - Base: `base_packages`, `base_files`, `base_macros`, `fill_base`, `split_base`, `standalone`
 - Nodos principales: `ingest`, `outline`, `review_outline`, `fan_out`, `assemble`,
   `compile_full`, `refine_global`, `write_outputs`
-- Subgrafo: `write_slide`, `compile_slide`, `route_slide`, `refine_slide`, `finish_slide`
+- Subgrafo: `write_slide`, `compile_slide`, `route_slide`, `review_slide`, `route_review`,
+  `refine_slide`, `finish_slide`
 
 ## Antes de dar un cambio por terminado
 

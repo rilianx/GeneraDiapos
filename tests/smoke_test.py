@@ -22,10 +22,15 @@ y se elige la variable con mayor impacto.
 La ganancia frente a smearsum es 1.43 en promedio sobre 76 instancias.
 \end{document}"""
 
-calls = {"write": {}, "refine": 0}
+calls = {"write": {}, "refine": 0, "review": 0}
 
 
 def fake_structured(model, schema, prompt, effort=None):
+    if schema is bg.Review:                            # revisor: marca la cifra 99.9, que no está en la fuente
+        calls["review"] += 1
+        bad = "99.9" in prompt.split("CONTEXTO:")[0]
+        return bg.Review(claims=[bg.Claim(afirmacion="99.9%", veredicto="Contradicha" if bad else "respaldada",
+                                          evidencia="la fuente no da ese porcentaje")])
     return bg.Outline(
         title="Demo", authors="A. Autor", venue="Revista", notation="$x$: variables",
         slides=[
@@ -74,6 +79,7 @@ print("refinados:", calls["refine"])
 print((out / "informe.md").read_text())
 assert (out / "presentacion.pdf").exists()
 assert not res["log_errors"]
+assert calls["review"] > 0, "el revisor debía ejecutarse en las diapos que compilan"
 # Tipos de diapo: el guion debe respetar fuentes y variedad; el frame, su formato
 spec = lambda k, src: bg.SlideSpec(title="T", bullets=["x"], kind=k, sources=src)
 chunks = {"sec1": "", "tab1": "", "eq1": ""}
@@ -113,7 +119,7 @@ J Glob Optim
 """
 c = bg.chunk_document(MD, "md")
 assert sorted(k for k in c if k.startswith("tab")) == ["tab1", "tab2"], list(c)
-assert bg.TABLA_DANADA in c["tab1"] and "|c|9|10|" in c["tab1"]       # trozos unidos y marcada
+assert bg.TABLA_DANADA in c["tab1"] and "|c|" not in c["tab1"]      # trozos unidos, rota: sin contenido
 assert c["tab2"].startswith("Table 2: Tiempos por variante.") and bg.TABLA_DANADA not in c["tab2"]
 o = bg.ajustar_kinds(bg.Outline(title="", authors="", venue="", notation="", slides=[
     bg.SlideSpec(title="T", bullets=[], kind="bullets", sources=["tab1"])]), c)
@@ -122,6 +128,7 @@ assert o.slides[0].kind == "bullets"                     # una tabla dañada no 
 # Filas copiadas y exceso de bloques
 dup = r"\begin{tabular}{lc} A & 20429 & 1.0 \\ B & 20429 & 1.0 \\ C & 19181 & 0.6 \\ \end{tabular}"
 assert len(bg.filas_repetidas(dup)) == 1
+assert "no tiene datos" in bg.filas_repetidas(r"\begin{tabular}{@{}lc@{}} X & -- & -- \\ \end{tabular}")[0]
 blk = r"\begin{frame}{T}" + r"\begin{block}{x}y\end{block}" * 3 + r"\end{frame}"
 assert any("bloques" in e for e in bg.style_check(blk, bg.STYLE_DEFAULTS))
 
