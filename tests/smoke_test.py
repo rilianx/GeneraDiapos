@@ -172,6 +172,18 @@ except RuntimeError:
 idx = bg.indice_tablas(c)
 assert "[tab2] Table 2: Tiempos por variante." in idx and "|Método|t|" in idx and "dañada" in idx
 
+# Avisos del guion: duda declarada, tabla dañada y métodos que no están en la tabla citada
+ol = {"slides": [
+    {"title": "Clásicas", "bullets": [r"\texttt{rr} y \texttt{A}"], "kind": "table", "sources": ["tab2"],
+     "aviso": ""},
+    {"title": "Rotas", "bullets": ["x"], "kind": "table", "sources": ["tab1"], "aviso": "¿tab1 o tab2?"},
+    {"title": "Bien", "bullets": [r"\texttt{A}"], "kind": "table", "sources": ["tab2"], "aviso": ""}]}
+av = bg.avisos_guion(ol, c)
+assert av[0][0].startswith("Menciona rr, que no aparecen en tab2")     # A sí está en tab2
+assert any("¿tab1 o tab2?" in w for w in av[1]) and any("dañada" in w for w in av[1])
+assert 2 not in av
+assert "⚠ Revisar primero" in bg.guion_md({"title": "T", **ol}, c, "p.pdf")
+
 # Consumo de tokens: se acumula por modelo y aparece en el informe
 class _Msg:
     usage_metadata = {"input_tokens": 1200, "output_tokens": 300}

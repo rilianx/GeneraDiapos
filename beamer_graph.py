@@ -184,6 +184,7 @@ class SlideSpec(BaseModel):
     sources: list[str] = Field(default_factory=list,
                                description="IDs de fragmentos que usa la diapo")
     section: str = Field(default="", description="sección de la presentación a la que pertenece")
+    aviso: str = Field(default="", description="duda para quien revisa el guion (p. ej. qué tabla usar); vacío si no hay")
 
     @field_validator("kind")
     @classmethod
@@ -709,6 +710,10 @@ los IDs exactos de los fragmentos que necesita (incluidos eq*, tab*, alg* si usa
 tabla o algoritmo). Si un tema no cabe en los límites, divídelo en dos diapositivas.
 - section: la sección de cada diapo, una de: {secciones}. Respeta ese orden y dale a cada \
 sección al menos una diapo si el paper tiene contenido para ella.
+- aviso: si NO estás seguro de qué tabla o fragmento corresponde a una diapo (p. ej. dos tablas \
+parecidas, o una tabla cuyo título no dice qué métodos compara), escríbelo aquí y nombra las \
+candidatas ("¿tab1 o tab2? tab2 parece de variantes"). Una persona revisará estos avisos. Déjalo \
+vacío cuando estés seguro; no inventes dudas.
 - kind: elige el formato que mejor muestre cada idea y VARÍALOS a lo largo de la presentación:
 {kinds}
   Cita un tab* solo si la diapo muestra esa tabla (kind table o columns); cita un eq* si muestra \
@@ -1003,6 +1008,33 @@ def cargar_guion(state: State, data: dict) -> dict:
     return {"outline": d, "head": head, "tail": tail}
 
 
+def avisos_guion(outline: dict, chunks: dict) -> dict[int, list[str]]:
+    """Dudas del modelo + chequeo en código: métodos que la diapo menciona (\\texttt{...})
+    y que no aparecen en ninguna de las tablas que cita, o tablas citadas que están dañadas."""
+    flat = lambda t: re.sub(r"[|\s*_]+", "", t).lower()
+    out: dict[int, list[str]] = {}
+    for i, sl in enumerate(outline["slides"]):
+        ws = [f"Duda del guion: {sl['aviso']}"] if sl.get("aviso") else []
+        tabs = [c for c in sl["sources"] if c.startswith("tab") and c in chunks]
+        ws += [f"{c} está dañada: sus cifras deben salir del texto, verifícalas"
+               for c in tabs if TABLA_DANADA in chunks[c]]
+        ok_tabs = [c for c in tabs if TABLA_DANADA not in chunks[c]]
+        if ok_tabs:
+            text = " ".join([sl["title"], *sl["bullets"]])
+            names = {n for n in re.findall(r"\\texttt\{([^}]+)\}", text)}
+            tab_text = flat(" ".join(chunks[c] for c in ok_tabs))
+            missing = sorted(n for n in names if flat(n) not in tab_text)
+            if missing:
+                heads = "; ".join(indice_tablas({c: chunks[c]}).split("encabezados: ")[-1][:120]
+                                  for c in ok_tabs)
+                ws.append(f"Menciona {', '.join(missing)}, que no aparecen en {', '.join(ok_tabs)} "
+                          f"(encabezados: {heads}): ¿es la tabla correcta? Si lo es, las cifras de "
+                          f"esos métodos deben salir del texto")
+        if ws:
+            out[i] = ws
+    return out
+
+
 def guion_md(outline: dict, chunks: dict, paper: str) -> str:
     """Vista legible del guion para revisarlo en un PR (lo que se edita es el .json)."""
     titles = {c: chunks[c].splitlines()[0] for c in chunks if c.startswith("tab")}
@@ -1012,9 +1044,15 @@ def guion_md(outline: dict, chunks: dict, paper: str) -> str:
            "generan las diapositivas.\n", "## Tablas del paper\n"]
     out += [f"- `{c}`: {t}" for c, t in titles.items()] or ["- (ninguna)"]
     out.append("")
+    avisos = avisos_guion(outline, chunks)
+    if avisos:
+        out.append("## ⚠ Revisar primero\n")
+        out += [f"- **Diapo {i}** ({outline['slides'][i]['title']}): {w}" for i, ws in avisos.items() for w in ws]
+        out.append("")
     for i, sl in enumerate(outline["slides"]):
         out.append(f"## {i}. {sl['title']}  \n`{sl['kind']}` · sección: {sl.get('section') or '-'} · fuentes: "
                    f"{', '.join(f'`{c}`' for c in sl['sources']) or '-'}\n")
+        out += [f"> ⚠ {w}" for w in avisos.get(i, [])]
         out += [f"- {b}" for b in sl["bullets"]]
         out.append("")
     return "\n".join(out)
@@ -1110,6 +1148,10 @@ def write_outputs(state: State) -> dict:
              f"Compilación global: {'OK' if not state['log_errors'] else 'con errores'} "
              f"({state['global_attempts']} refinados globales)\n"]
     lines += [f"- {e}" for e in state["log_errors"]]
+    av = avisos_guion(state["outline"], state.get("chunks", {}))
+    if av:
+        lines.append("\n## Avisos del guion (revisar las tablas usadas)\n")
+        lines += [f"- Diapo {i}: {w}" for i, ws in av.items() for w in ws]
     lines.append("\n| # | Diapositiva | Estado | Intentos | Avisos |\n|---|---|---|---|---|")
     for idx, _, status, attempts, warns in sorted(state["frames"]):
         title = state["outline"]["slides"][idx]["title"].replace("|", "/")

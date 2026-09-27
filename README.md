@@ -148,9 +148,11 @@ Por defecto hay **revisión humana del guion** (el paso más barato de corregir)
 
 1. Sube un paper a `papers/` en `main` → llega un PR **"Guion para revisar"** con
    `guiones/<nombre>.json` y una vista legible `guiones/<nombre>.md`.
-2. Revisa el orden, el tipo de cada diapo y sobre todo qué fragmentos usa cada una
-   (`sources`; las tablas del paper están listadas al inicio del `.md`). Si algo está
-   mal, edita el `.json` en el mismo PR.
+2. Empieza por la sección **⚠ Revisar primero** del `.md`: dudas que el propio modelo
+   declaró (campo `aviso`) y diapos que mencionan métodos que no aparecen en las tablas
+   que citan, o que citan una tabla dañada. Luego revisa el orden, el tipo de cada diapo
+   y qué fragmentos usa (`sources`; las tablas del paper están listadas al inicio). Si
+   algo está mal, edita el `.json` en el mismo PR.
 3. Fusiona el PR → se generan las diapositivas desde ese guion y llega un segundo PR
    con `presentaciones/<nombre>/` (`presentacion.tex`, `.pdf`, `outline.json`,
    `informe.md`). El PDF también queda en los artefactos del run.
