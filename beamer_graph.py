@@ -149,7 +149,25 @@ def call_text(model: str, prompt: str) -> str:
 def call_structured(model: str, schema: type[BaseModel], prompt: str) -> BaseModel:
     # function_calling tolera campos opcionales del esquema en ambos proveedores
     kw = {"method": "function_calling"} if PROVIDER == "openai" else {}
-    return _chat(model).with_structured_output(schema, **kw).invoke(prompt)
+    out = _chat(model).with_structured_output(schema, **kw).invoke(prompt)
+    return schema.model_validate(restaurar_escapes(out.model_dump()))
+
+
+# En JSON, "\t", "\b", "\f", "\r" y "\n" son escapes: si el modelo escribe \texttt
+# o \frac sin doblar la barra, llegan como caracteres de control. Se restauran.
+_CONTROL = {"\t": r"\t", "\b": r"\b", "\f": r"\f", "\r": r"\r"}
+_NEWLINE_CMD = re.compile(r"\n(?=(?:abla|eq|eg|ot|oindent|ewline|u|i|leq|geq|mid)(?![A-Za-z]))")
+
+
+def restaurar_escapes(obj):
+    if isinstance(obj, str):
+        obj = _NEWLINE_CMD.sub(lambda _: "\\n", obj)
+        return "".join(_CONTROL.get(c, c) for c in obj)
+    if isinstance(obj, list):
+        return [restaurar_escapes(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: restaurar_escapes(v) for k, v in obj.items()}
+    return obj
 
 
 def strip_fences(s: str) -> str:
