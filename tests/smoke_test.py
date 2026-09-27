@@ -25,7 +25,7 @@ La ganancia frente a smearsum es 1.43 en promedio sobre 76 instancias.
 calls = {"write": {}, "refine": 0}
 
 
-def fake_structured(model, schema, prompt):
+def fake_structured(model, schema, prompt, effort=None):
     return bg.Outline(
         title="Demo", authors="A. Autor", venue="Revista", notation="$x$: variables",
         slides=[

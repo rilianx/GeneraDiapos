@@ -28,6 +28,7 @@ jobs:
       LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
       LLM_MODEL_OUTLINE: ${{ vars.LLM_MODEL_OUTLINE }}
       LLM_MODEL_SLIDES: ${{ vars.LLM_MODEL_SLIDES }}
+      LLM_REASONING_OUTLINE: ${{ vars.LLM_REASONING_OUTLINE }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:

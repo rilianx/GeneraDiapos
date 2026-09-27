@@ -95,6 +95,7 @@ Con `--review` el pipeline se detiene tras el guion, lo guarda en
 | Qué | Dónde | Notas |
 |---|---|---|
 | Proveedor y modelos | variables `LLM_PROVIDER`, `LLM_MODEL_OUTLINE`, `LLM_MODEL_SLIDES` | por defecto OpenAI; los nombres por defecto pueden quedar obsoletos, usa los de tu cuenta |
+| Razonamiento del guion | variable `LLM_REASONING_OUTLINE` | `low`, `medium` (por defecto) o `high`; solo OpenAI. `LLM_REASONING_SLIDES` hace lo mismo para las diapos (por defecto, sin razonamiento extra) |
 | Preámbulo, tema, macros | `base.tex` | debe tener exactamente un `%%SLIDES%%` |
 | Título/autores | `<<TITLE>>`, `<<AUTHORS>>`, `<<VENUE>>` en `base.tex` | se rellenan desde el guion; si los escribes a mano se respetan |
 | Reglas de estilo | `estilo.toml` | `[guia]` va al prompt; `[limites]` se verifica en código |

@@ -50,6 +50,10 @@ _DEFAULT_MODELS = {"anthropic": ("claude-opus-5-5", "claude-sonnet-5"),
                    "openai": ("gpt-5.4-mini", "gpt-5.4-mini")}
 MODEL_OUTLINE = os.environ.get("LLM_MODEL_OUTLINE") or _DEFAULT_MODELS[PROVIDER][0]
 MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES") or _DEFAULT_MODELS[PROVIDER][1]
+# Esfuerzo de razonamiento (solo OpenAI): low | medium | high. Vacío = el del modelo.
+# El guion es la decisión que más pesa; las diapos van sin razonamiento extra.
+REASONING_OUTLINE = os.environ.get("LLM_REASONING_OUTLINE") or "medium"
+REASONING_SLIDES = os.environ.get("LLM_REASONING_SLIDES") or None
 MAX_SLIDE_ATTEMPTS = 3
 MAX_GLOBAL_ATTEMPTS = 2
 MAX_OUTLINE_ATTEMPTS = 3
@@ -229,10 +233,12 @@ class SlideOutput(TypedDict):
 # ----------------------------------------------------------------------------
 # LLM (aislado para poder simularlo en pruebas)
 # ----------------------------------------------------------------------------
-def _chat(model: str):
+def _chat(model: str, effort: str | None = None):
     if PROVIDER == "openai":                      # lee OPENAI_API_KEY del entorno
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, max_tokens=8000, max_retries=3)
+        # el razonamiento consume tokens de salida: se amplía el tope
+        return ChatOpenAI(model=model, max_tokens=24000 if effort else 8000, max_retries=3,
+                          **({"reasoning_effort": effort} if effort else {}))
     from langchain_anthropic import ChatAnthropic  # lee ANTHROPIC_API_KEY del entorno
     return ChatAnthropic(model=model, max_tokens=8000, max_retries=3)
 
@@ -252,7 +258,7 @@ def registrar_uso(model: str, msg) -> None:
 
 
 def call_text(model: str, prompt: str) -> str:
-    msg = _chat(model).invoke(prompt)
+    msg = _chat(model, REASONING_SLIDES).invoke(prompt)
     registrar_uso(model, msg)
     out = msg.content
     if isinstance(out, list):
@@ -260,10 +266,11 @@ def call_text(model: str, prompt: str) -> str:
     return strip_fences(out)
 
 
-def call_structured(model: str, schema: type[BaseModel], prompt: str) -> BaseModel:
+def call_structured(model: str, schema: type[BaseModel], prompt: str,
+                    effort: str | None = None) -> BaseModel:
     # function_calling tolera campos opcionales del esquema en ambos proveedores
     kw = {"method": "function_calling"} if PROVIDER == "openai" else {}
-    res = _chat(model).with_structured_output(schema, include_raw=True, **kw).invoke(prompt)
+    res = _chat(model, effort).with_structured_output(schema, include_raw=True, **kw).invoke(prompt)
     registrar_uso(model, res["raw"])
     if res["parsed"] is None:
         raise res["parsing_error"] or RuntimeError("El modelo no devolvió el esquema pedido")
@@ -751,7 +758,7 @@ def outline(state: State) -> dict:
     guide, lim = load_style(state.get("style_path"))
     feedback = ""
     for attempt in range(1, MAX_OUTLINE_ATTEMPTS + 1):
-        o = call_structured(MODEL_OUTLINE, Outline, OUTLINE_PROMPT.format(
+        o = call_structured(MODEL_OUTLINE, Outline, effort=REASONING_OUTLINE, prompt=OUTLINE_PROMPT.format(
             kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide=guide or "-", limits=describe_limits(lim)))
