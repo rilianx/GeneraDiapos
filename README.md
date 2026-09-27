@@ -82,6 +82,76 @@ flowchart TD
     class pausa human
 ```
 
+## Qué entra y sale de cada módulo
+
+Azul: código determinista. Naranja: Claude (modo `--claude`) o el LLM de la API; en modo
+Claude cada caja naranja es una tarea en `trabajo/<nombre>/tareas/` y su respuesta se valida
+con código antes de seguir. Verde: la revisión humana del guion (`--review`).
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
+flowchart TB
+    paper[/"paper .pdf / .tex / .md"/]
+    base[/"base.tex · estilo.toml"/]
+    guionjson[/"guion.json revisado<br/>(opcional)"/]
+
+    ingest["<b>ingest</b> · determinista<br/>entra: paper, base.tex<br/>sale: chunks sec* tab* alg* eq* fig*,<br/>texto completo, figuras/figN.png"]
+    lectura["<b>lectura</b> · Claude (solo modo claude)<br/>entra: páginas del PDF, chunks<br/>sale: inventario de tablas, algoritmos<br/>y ecuaciones con su página"]
+    vlect["validar_lectura · determinista<br/>¿existe 'Table N'? ¿encabezados en el texto?<br/>no valida → se vuelve a pedir"]
+    outline["<b>outline</b> · Claude / LLM<br/>entra: lista de chunks, guía y límites<br/>sale: guion: título, notación y por diapo<br/>título, viñetas, tipo, fuentes, sección, aviso"]
+    vout["ajustar_kinds · asegurar_portada<br/>validate_outline · variedad · determinista<br/>errores → reintento con feedback"]
+    cargar["<b>cargar_guion</b> · determinista<br/>entra: guion.json<br/>sale: guion validado"]
+    review["<b>review_outline</b> · HUMANO<br/>entra: guion como documento editable<br/>sale: guion editado<br/>(guion_desde_md + validate_outline)"]
+    fan["<b>fan_out</b> · determinista<br/>entra: guion, chunks, base, estilo<br/>sale por diapo: spec, texto de sus fuentes,<br/>sección, aviso, plan del guion, índice de tablas"]
+
+    subgraph SLIDE["Por cada diapositiva, en paralelo"]
+        write["<b>write_slide</b> · Claude / LLM<br/>entra: título, viñetas, tipo + plantilla,<br/>fuentes, sección, aviso, plan, macros, límites<br/>sale: un frame<br/>(portada y agenda: determinista)"]
+        comp["<b>compile_slide</b> · determinista<br/>entra: frame<br/>sale: errores de compilación, lint,<br/>estilo y tipo · best_frame si compila"]
+        refs["<b>refine_slide</b> · Claude / LLM<br/>entra: frame + errores + fuentes<br/>sale: frame corregido (máx. 3)"]
+        rev["<b>review_slide</b> · Claude / LLM<br/>entra: frame, fuentes, índice de tablas<br/>sale: afirmaciones no respaldadas"]
+        reff["<b>refine_facts</b> · Claude / LLM<br/>entra: frame + afirmaciones<br/>sale: frame corregido (máx. 2)"]
+        fin["<b>finish_slide</b> · determinista<br/>entra: frame, best_frame, errores<br/>sale: frame final, estado, avisos<br/>(+ cifras que no están en el paper)"]
+    end
+
+    asm["<b>assemble</b> · determinista<br/>entra: frames + base.tex<br/>sale: .tex completo con \section{}"]
+    cfull["<b>compile_full</b> · determinista<br/>entra: .tex · sale: PDF + errores del log"]
+    rglob["<b>refine_global</b> · Claude / LLM<br/>entra: cuerpo + errores del log<br/>sale: cuerpo corregido (base intacta)"]
+    outw["<b>write_outputs</b> · determinista<br/>sale: presentacion.tex / .pdf,<br/>outline.json, informe.md (avisos, tokens)"]
+
+    subgraph LEY["Leyenda"]
+        direction LR
+        l1["determinista (código)"]:::det
+        l2["Claude / LLM"]:::claude
+        l3["humano"]:::human
+    end
+
+    paper --> ingest
+    base --> ingest
+    ingest --> lectura --> vlect --> outline
+    ingest -. "modo API: se salta" .-> outline
+    outline --> vout --> review
+    guionjson --> cargar --> review
+    review --> fan
+    fan --> write --> comp
+    comp -->|"errores y < 3 intentos"| refs --> comp
+    comp -->|"compila"| rev
+    rev -->|"sin respaldo y < 2 revisiones"| reff --> comp
+    rev -->|"ok"| fin
+    comp -->|"intentos agotados"| fin
+    fin --> asm --> cfull
+    cfull -->|"errores y < 2 intentos"| rglob --> cfull
+    cfull -->|"ok"| outw
+
+    classDef det fill:#e3eefc,stroke:#2b6cb0,color:#000
+    classDef claude fill:#fde7c8,stroke:#c77700,color:#000
+    classDef human fill:#e6f4ea,stroke:#2f855a,color:#000
+    classDef file fill:#f4f4f4,stroke:#888,color:#000
+    class ingest,vlect,vout,cargar,fan,comp,fin,asm,cfull,outw det
+    class lectura,outline,write,refs,rev,reff,rglob claude
+    class review human
+    class paper,base,guionjson file
+```
+
 ## Estructura
 
 ```
