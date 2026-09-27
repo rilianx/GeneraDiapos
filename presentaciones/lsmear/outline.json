@@ -1,0 +1,173 @@
+{
+  "title": "lsmear: selección de variables para branch-and-bound intervalar",
+  "authors": "Ignacio Araya \\and Bertrand Neveu",
+  "venue": "Journal of Global Optimization, 2017",
+  "notation": "\\small Glosario: $\\mathbf{x}$ = caja actual; $x_i$ = variable; $f$ = objetivo; $g_j$ = restricción; $J_{ji}$ = sobreestimación intervalar de $\\partial g_j/\\partial x_i$; $\\lambda^*$ = multiplicadores duales óptimos; $L$ = Lagrangiano; $\\mathrm{UB}$ = cota superior; $\\mathrm{LB}$ = cota inferior; $\\epsilon$ = precisión objetivo; $\\mathrm{wid}(\\cdot)$ = ancho del intervalo; $\\mathcal{L}$ = lista de cajas pendientes.",
+  "slides": [
+    {
+      "title": "lsmear pesa restricciones antes de ramificar",
+      "bullets": [
+        "Presentar optimización global continua con restricciones no lineales.",
+        "Explicar branch-and-bound intervalar y selección de variable.",
+        "Mostrar que smears clásicos tratan todas las restricciones por igual."
+      ],
+      "kind": "title",
+      "sources": []
+    },
+    {
+      "title": "El problema es elegir bien qué variable dividir",
+      "bullets": [
+        "En NCOPs, una mala variable dispara el árbol de búsqueda.",
+        "La bisectriz afecta cota inferior, factibilidad y número de cajas.",
+        "round-robin ignora el sistema; largest-first mira solo el ancho."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec3",
+        "sec4",
+        "sec5"
+      ]
+    },
+    {
+      "title": "Las heurísticas clásicas no distinguen restricciones activas",
+      "bullets": [
+        "smearsum, smearmax y smearsumrel agregan impactos sin ponderación.",
+        "Las restricciones inactivas pueden contaminar la decisión de ramificación.",
+        "ViolationTransfer usa relajación convexa y es intrusivo para el solver."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec3",
+        "sec7"
+      ]
+    },
+    {
+      "title": "La idea es ponderar con multiplicadores duales óptimos",
+      "bullets": [
+        "Linealizar el problema alrededor del punto medio de la caja.",
+        "Resolver un programa lineal para estimar multipliers duales óptimos.",
+        "Reusar esos pesos en una función smear tipo Lagrangiano."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec6",
+        "sec7"
+      ]
+    },
+    {
+      "title": "lsmear computa el impacto con un Lagrangiano",
+      "bullets": [
+        "Mostrar la Lagrangiana del problema original ponderada por \\lambda^*.",
+        "Definir el impacto de cada variable como magnitud por ancho.",
+        "Destacar que solo importa la variable con mayor impacto."
+      ],
+      "kind": "equation",
+      "sources": [
+        "sec6",
+        "sec7"
+      ]
+    },
+    {
+      "title": "El algoritmo primero linealiza y luego selecciona",
+      "bullets": [
+        "Fase 1: construir la linealización de Taylor en el centro de la caja.",
+        "Fase 2: resolver el LP; si falla, caer en smearsum.",
+        "Devolver la variable con mayor |D_i|\\,\\mathrm{wid}(x_i)."
+      ],
+      "kind": "algorithm",
+      "sources": [
+        "alg2"
+      ]
+    },
+    {
+      "title": "La evaluación usa IbexOpt y 76 instancias",
+      "bullets": [
+        "Implementación en IbexOpt con HC4, ACID(HC4), AF2 y XNewton.",
+        "Buscar una solución \\epsilon-óptima con \\epsilon = 10^{-6}.",
+        "Correr cinco veces por instancia y reportar el promedio de tres."
+      ],
+      "kind": "columns",
+      "sources": [
+        "sec9"
+      ]
+    },
+    {
+      "title": "lsmear reduce el tiempo total frente a clásicos",
+      "bullets": [
+        "Comparar lsmear con rr, lf, ssum, smax y ssr.",
+        "Citar el total: 21\\,035 s para lsmear vs 29\\,136 s de smax.",
+        "Resaltar que lsmear domina en casi 90\\% de instancias."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab1",
+        "sec10"
+      ]
+    },
+    {
+      "title": "lsmear-MG mejora aún más y simplifica implementación",
+      "bullets": [
+        "Comparar lsmear, lsmear-MG, lsmear-LI, lsmear-LR y lsmear-LRI.",
+        "lsmear-MG obtiene el mejor tiempo total: 19\\,181 s.",
+        "lsmear-LI y lsmear-LRI son las peores variantes."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab2",
+        "sec11"
+      ]
+    },
+    {
+      "title": "FeasibleDiving potencia más que minLB",
+      "bullets": [
+        "Cruzar dos estrategias de búsqueda: minLB y FeasibleDiving.",
+        "FeasibleDiving supera a minLB con cualquier variable selection.",
+        "lsmear-MG con minLB aún vence a ssum con FeasibleDiving."
+      ],
+      "kind": "table",
+      "sources": [
+        "tab3",
+        "sec12"
+      ]
+    },
+    {
+      "title": "El sobrecoste de linearizar es pequeño",
+      "bullets": [
+        "El LP de lsmear añade poco frente al costo de filtrado del solver.",
+        "La selección por lsmear se beneficia del mismo Jacobiano usado por smearsum.",
+        "Las variantes basadas en relajación requieren modificar el contractor."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec7",
+        "sec8",
+        "sec10"
+      ]
+    },
+    {
+      "title": "La principal ganancia viene de ponderar restricciones",
+      "bullets": [
+        "Ponderar con \\lambda^* supera tratar restricciones activas e inactivas igual.",
+        "La versión más simple y eficaz es lsmear-MG.",
+        "La relajación lineal completa no compensa su mayor complejidad."
+      ],
+      "kind": "block",
+      "sources": [
+        "sec11",
+        "sec13"
+      ]
+    },
+    {
+      "title": "lsmear abre una línea para usar más información",
+      "bullets": [
+        "Incorporar errores de violación de restricciones, como en ViolationTransfer.",
+        "Ignorar variables ligadas solo a restricciones lineales puede ser ventajoso.",
+        "Extender la heurística a otros solvers intervalares y variantes híbridas."
+      ],
+      "kind": "bullets",
+      "sources": [
+        "sec13"
+      ]
+    }
+  ]
+}

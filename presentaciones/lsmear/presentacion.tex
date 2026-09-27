@@ -1,0 +1,253 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+\usetheme{metropolis}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{tikz}
+
+% Macros disponibles para el modelo: se detectan automáticamente y se le
+% informan en cada diapositiva. Agrega aquí las que necesite cada paper.
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% lsmear: selección de variables para branch-and-bound intervalar, Ignacio Araya \and Bertrand Neveu y Journal of Global Optimization, 2017 se rellenan desde el guion.
+% Si los reemplazas a mano, se respetan tal cual.
+\title{lsmear: selección de variables para branch-and-bound intervalar}
+\subtitle{Journal of Global Optimization, 2017}
+\author{Ignacio Araya \and Bertrand Neveu}
+\date{}
+
+\begin{document}
+
+\begin{frame}[plain]
+\titlepage
+\end{frame}
+
+\begin{frame}{El problema es elegir bien qué variable dividir}
+\small
+\begin{itemize}
+  \item Una mala elección de variable puede disparar el árbol de búsqueda.
+  \item La bisectriz afecta \textbf{cota inferior}, factibilidad y número de cajas.
+  \item \texttt{round-robin} ignora el sistema; \texttt{largest-first} mira solo el ancho.
+\end{itemize}
+
+\begin{alertblock}{Idea clave}
+\small
+La variable a dividir debe reflejar el impacto real en el problema, no solo el dominio.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{Las heurísticas clásicas no distinguen restricciones activas}
+\small
+\begin{columns}[T]
+\column{0.50\textwidth}
+\begin{block}{\texttt{smear} trata todas las restricciones igual}
+\begin{itemize}
+  \item \texttt{smearsum}, \texttt{smearmax} y \texttt{smearsumrel} agregan impactos sin ponderación.
+  \item No distinguen restricciones activas e inactivas.
+\end{itemize}
+\end{block}
+
+\column{0.50\textwidth}
+\begin{alertblock}{\texttt{ViolationTransfer} es más intrusiva}
+\begin{itemize}
+  \item Usa relajación convexa y la función de Lagrange.
+  \item Requiere un problema reformulado para construir $x_i^v$.
+\end{itemize}
+\end{alertblock}
+\end{columns}
+\end{frame}
+
+\begin{frame}{La idea es ponderar con multiplicadores duales óptimos}
+\small
+\begin{block}{Contexto y método}
+\begin{itemize}
+\item \textbf{lsmear} reusa una función smear tipo Lagrangiano para ponderar restricciones.
+\item Linealiza el problema alrededor del punto medio de la caja.
+\item Resuelve un programa lineal para estimar \emph{optimal Lagrange multipliers}.
+\item Reemplaza los pesos del Lagrangiano por esa estimación dual.
+\end{itemize}
+\end{block}
+
+\begin{exampleblock}{Esquema de la aproximación}
+\[
+g_j(\mathbf{x}) \approx g_j(\mathrm{mid}(\mathbf{x})) + \mathrm{mid}(J_{j:}) \, (\mathbf{x}-\mathrm{mid}(\mathbf{x}))
+\]
+La expansión de primer orden usa \(\mathrm{mid}(J_{ji})\) como sobreestimación intervalar.
+\end{exampleblock}
+\end{frame}
+
+\begin{frame}{lsmear computa el impacto con un Lagrangiano}
+\small
+\begin{equation*}
+L(\mathbf{x},\lambda^*) = f(\mathbf{x}) + \sum_{j=1}^{m} \lambda_j^*\, g_j(\mathbf{x})
+\end{equation*}
+\begin{itemize}
+  \item $L$ pondera cada restricción con \textbf{multiplicadores duales óptimos}.
+  \item $\lambda_j^*=0$ para restricciones inactivas.
+\end{itemize}
+
+\begin{equation*}
+\mathrm{impacto}_i = \left|D_i\right|\,\mathrm{wid}(x_i),
+\qquad
+D_i = \lambda_i^* + \sum_{j=1}^{m} \lambda_{n+j}^*\, J_{ji}
+\end{equation*}
+\begin{itemize}
+  \item $D_i$ agrega el efecto de la variable $x_i$ en la linealización.
+  \item \alert{Se bisecciona la variable con mayor impacto.}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} linealiza y luego selecciona}
+\small
+\begin{algorithm}[H]
+\scriptsize
+\KwIn{caja $\mathbf{x}$}
+\KwOut{variable $i^*$}
+linealizar $f$ en el centro de $\mathbf{x}$\;
+resolver el LP asociado\;
+\If{el LP falla}{
+  usar \texttt{smearsum}\;
+}
+calcular $s_i \gets |D_i|\,\mathrm{wid}(x_i)$\;
+\Return $\argmax_i s_i$\;
+\end{algorithm}
+
+\begin{alertblock}{Idea clave}
+La linealización de Taylor guía la selección de la variable más prometedora.
+\end{alertblock}
+\end{frame}
+
+% TODO: la diapositiva 6 no compiló tras 3 intentos
+\begin{frame}{La evaluación usa IbexOpt y 76 instancias}
+\alert{Diapositiva pendiente de revisión}
+\end{frame}
+
+\begin{frame}{lsmear reduce el tiempo total frente a clásicos}
+\small
+\begin{columns}[T,onlytextwidth]
+\column{0.56\textwidth}
+\begin{block}{Comparación global}
+\begin{itemize}
+  \item Se comparó \texttt{lsmear} con \texttt{rr}, \texttt{lf}, \texttt{ssum}, \texttt{smax} y \texttt{ssr}.
+  \item En el total, \texttt{lsmear} suma 21\,035 s; \texttt{smax}, 29\,136 s.
+  \item Domina en casi 90\% de las instancias.
+\end{itemize}
+\end{block}
+
+\column{0.44\textwidth}
+\begin{center}
+\begin{tabular}{@{}l r@{}}
+\toprule
+Estrategia & Tiempo total (s) \\ \midrule
+\texttt{lsmear} & \alert{21\,035} \\
+\texttt{smax} & 29\,136 \\
+\texttt{ssum} & 43\,867 \\
+\texttt{ssr} & 65\,789 \\
+\texttt{lf} & 144\,477 \\
+\texttt{rr} & 77\,602 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{columns}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear-MG} mejora aún más y simplifica implementación}
+\small
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Variante & Tiempo total (s) & Boxes & Gain \\
+\midrule
+\texttt{lsmear} & 21\,035 & -- & 0.91 \\
+\texttt{lsmear-MG} & \alert{19\,181} & -- & 1.07 \\
+\texttt{lsmear-LR} & 20\,429 & -- & 0.94 \\
+\texttt{lsmear-LI} & -- & -- & -- \\
+\texttt{lsmear-LRI} & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \texttt{lsmear-MG} obtiene el mejor tiempo total y supera a \texttt{lsmear} y \texttt{lsmear-LR}.
+  \item \texttt{lsmear-LI} y \texttt{lsmear-LRI} reportan los peores resultados.
+  \item \texttt{lsmear-MG} evita modificar el contractor del solver.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{FeasibleDiving potencia más que minLB}
+\small
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Búsqueda & Tiempo total & Ganancia de lsmear-MG \\ \midrule
+\texttt{minLB} & 59,274 & 2.03 \\
+\texttt{FeasibleDiving} & \alert{43,867} & \alert{2.29} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \texttt{FeasibleDiving} supera a \texttt{minLB} con cualquier selección de variables.
+  \item \texttt{lsmear-MG} con \texttt{minLB} aún vence a \texttt{ssum} con \texttt{FeasibleDiving}.
+  \item En el total, \texttt{FeasibleDiving} reduce el tiempo agregado frente a \texttt{minLB}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{El sobrecoste de linearizar es pequeño}
+\small
+\begin{block}{Mensaje clave}
+\begin{itemize}
+  \item \texttt{lsmear} resuelve un LP extra con el mismo Jacobiano usado por \texttt{smearsum}.
+  \item Ese costo es pequeño frente al filtrado del solver, que domina el tiempo total.
+\end{itemize}
+\end{block}
+
+\begin{exampleblock}{Variantes y limitación}
+\begin{itemize}
+  \item \texttt{lsmear-LR} y \texttt{lsmear-LRI} usan relajación lineal y requieren modificar el contractor.
+  \item \texttt{lsmear}, \texttt{lsmear-LI} y \texttt{lsmear-MG} evitan ese cambio con una linearización independiente.
+\end{itemize}
+\end{exampleblock}
+\end{frame}
+
+\begin{frame}{La principal ganancia viene de ponderar restricciones}
+\small
+\begin{block}{Idea central}
+\begin{itemize}
+\item Ponderar restricciones con \(\lambda^*\) supera tratarlas como igualmente importantes.
+\item \texttt{lsmear-MG} es la variante más simple y eficaz.
+\item La relajación lineal completa no compensa su mayor complejidad.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Mensaje clave}
+\textbf{Detectar} restricciones activas no basta; hay que incorporarlas en la ponderación.
+\end{alertblock}
+\end{frame}
+
+\begin{frame}{\texttt{lsmear} usa información dual para biseccionar}
+\small
+\begin{block}{Idea del método}
+\begin{itemize}
+  \item Usa multiplicadores de Lagrange óptimos de una linealización.
+  \item Calcula el \texttt{smear} sobre una función tipo Lagrangiano.
+  \item Ignora variables ligadas solo a restricciones lineales.
+\end{itemize}
+\end{block}
+
+\begin{alertblock}{Mensaje clave}
+La selección mejora al ponderar restricciones y variables con información dual e intervalar.
+\end{alertblock}
+
+\begin{itemize}
+  \item Extiende la heurística a otros solvers intervalares y variantes híbridas.
+  \item Incorpora errores de violación, como en \texttt{ViolationTransfer}.
+\end{itemize}
+\end{frame}
+
+\end{document}
