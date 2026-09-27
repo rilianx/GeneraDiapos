@@ -1,16 +1,33 @@
-# Genera la presentación de cada paper nuevo en papers/ y abre un PR con el resultado.
-# También se puede lanzar a mano desde la pestaña Actions indicando la ruta del paper.
+# Genera presentaciones a partir de los papers de papers/ y abre un PR con el resultado.
+#
+# Flujo con revisión humana del guion (por defecto):
+#   1. Subes un paper a papers/  → se genera solo el guion y llega un PR con
+#      guiones/<nombre>.json (editable) y guiones/<nombre>.md (vista legible).
+#   2. Revisas el guion en el PR, editas el .json si hace falta y fusionas.
+#   3. Al fusionar, guiones/<nombre>.json llega a main → se generan las
+#      diapositivas desde ese guion y llega un segundo PR con presentaciones/<nombre>/.
+#
+# Para saltarte la revisión: variable del repo REVISAR_GUION=false, o lánzalo a mano
+# desde Actions con modo "completo".
 name: generar presentacion
 
 on:
   push:
     branches: [main]
-    paths: ["papers/**"]
+    paths: ["papers/**", "guiones/**"]
   workflow_dispatch:
     inputs:
       paper:
-        description: "Ruta del paper (p. ej. papers/lsmear.pdf)"
-        required: true
+        description: "Ruta del paper (p. ej. papers/lsmear.pdf). Vacío si usas un guion."
+        required: false
+      modo:
+        description: "guion: solo el guion para revisar; completo: todo de una vez"
+        type: choice
+        options: [guion, completo]
+        default: guion
+      guion:
+        description: "Ruta de un guion ya revisado (p. ej. guiones/lsmear.json)"
+        required: false
 
 permissions:
   contents: write
@@ -38,12 +55,46 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Elegir trabajos
+        id: jobs
+        env:
+          INPUT_PAPER: ${{ github.event.inputs.paper }}
+          INPUT_MODO: ${{ github.event.inputs.modo }}
+          INPUT_GUION: ${{ github.event.inputs.guion }}
+          REVISAR: ${{ vars.REVISAR_GUION || 'true' }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # Cada línea: modo|ruta. Modos: guion, completo, desde_guion.
+          if [ -n "$INPUT_GUION" ]; then
+            jobs="desde_guion|$INPUT_GUION"
+          elif [ -n "$INPUT_PAPER" ]; then
+            jobs="${INPUT_MODO:-guion}|$INPUT_PAPER"
+          else
+            modo=$([ "$REVISAR" = "false" ] && echo completo || echo guion)
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              papers=$(git ls-files 'papers/*.pdf' 'papers/*.tex' 'papers/*.md')
+              guiones=""
+            else
+              papers=$(git diff --name-only --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- \
+                       'papers/*.pdf' 'papers/*.tex' 'papers/*.md')
+              guiones=$(git diff --name-only --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- 'guiones/*.json')
+            fi
+            jobs=$( { for f in $papers; do echo "$modo|$f"; done
+                      for f in $guiones; do echo "desde_guion|$f"; done; } )
+          fi
+          echo "Trabajos:"; echo "$jobs"
+          { echo "list<<EOF"; echo "$jobs"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          grep -q '^guion|' <<< "$jobs" && echo "guion=true" >> "$GITHUB_OUTPUT" || true
+          grep -qE '^(completo|desde_guion)\|' <<< "$jobs" && echo "slides=true" >> "$GITHUB_OUTPUT" || true
+
       - uses: actions/setup-python@v5
+        if: steps.jobs.outputs.list != ''
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Instalar LaTeX
+        if: steps.jobs.outputs.list != ''
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -51,50 +102,59 @@ jobs:
             texlive-pictures texlive-science texlive-fonts-recommended
 
       - name: Instalar dependencias Python
+        if: steps.jobs.outputs.list != ''
         run: pip install -r requirements.txt
 
-      - name: Elegir papers a procesar
-        id: papers
+      - name: Generar
+        if: steps.jobs.outputs.list != ''
         env:
-          INPUT_PAPER: ${{ github.event.inputs.paper }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          if [ -n "$INPUT_PAPER" ]; then
-            files="$INPUT_PAPER"
-          elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            files=$(git ls-files 'papers/*.pdf' 'papers/*.tex' 'papers/*.md')
-          else
-            files=$(git diff --name-only --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- \
-                    'papers/*.pdf' 'papers/*.tex' 'papers/*.md')
-          fi
-          echo "Papers: $files"
-          { echo "files<<EOF"; echo "$files"; echo "EOF"; } >> "$GITHUB_OUTPUT"
-
-      - name: Generar presentaciones
-        if: steps.papers.outputs.files != ''
-        env:
-          FILES: ${{ steps.papers.outputs.files }}
+          JOBS: ${{ steps.jobs.outputs.list }}
         run: |
           status=0
-          while IFS= read -r f; do
+          while IFS='|' read -r modo f; do
             [ -z "$f" ] && continue
             name=$(basename "${f%.*}")
-            echo "::group::$f"
-            python beamer_graph.py "$f" --out "presentaciones/$name" --concurrency 3 || status=1
+            echo "::group::$modo $f"
+            case "$modo" in
+              guion)       python beamer_graph.py "$f" --solo-guion "guiones/$name.json" || status=1 ;;
+              completo)    python beamer_graph.py "$f" --out "presentaciones/$name" --concurrency 3 || status=1 ;;
+              desde_guion) python beamer_graph.py --guion "$f" --out "presentaciones/$name" --concurrency 3 || status=1 ;;
+            esac
             echo "::endgroup::"
-          done <<< "$FILES"
+          done <<< "$JOBS"
           exit $status
 
       - name: Subir resultados como artefacto
-        if: always() && steps.papers.outputs.files != ''
+        if: always() && steps.jobs.outputs.list != ''
         uses: actions/upload-artifact@v4
         with:
-          name: presentaciones
-          path: presentaciones/
+          name: resultados
+          path: |
+            presentaciones/
+            guiones/
           if-no-files-found: ignore
 
+      - name: Abrir PR con los guiones
+        if: steps.jobs.outputs.guion == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: guiones/${{ github.run_id }}
+          commit-message: "Guiones para revisar (run ${{ github.run_id }})"
+          title: "Guion para revisar"
+          add-paths: guiones/
+          body: |
+            Guiones generados a partir de:
+            ```
+            ${{ steps.jobs.outputs.list }}
+            ```
+            1. Lee `guiones/<nombre>.md`: orden, tipo de cada diapo y **qué fragmentos usa**
+               (`sources`), sobre todo las tablas (`tab*`): la lista de tablas del paper está al inicio.
+            2. Si algo está mal, edita `guiones/<nombre>.json` en este PR (título, puntos, `kind`,
+               `sources`). El `.md` es solo una vista; no hace falta actualizarlo.
+            3. Fusiona el PR: eso genera las diapositivas desde el guion y abre otro PR.
+
       - name: Abrir PR con las presentaciones
-        if: steps.papers.outputs.files != ''
+        if: steps.jobs.outputs.slides == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
           branch: presentaciones/${{ github.run_id }}
@@ -104,7 +164,8 @@ jobs:
           body: |
             Generado automáticamente a partir de:
             ```
-            ${{ steps.papers.outputs.files }}
+            ${{ steps.jobs.outputs.list }}
             ```
-            Revisa `informe.md` de cada carpeta: estado por diapositiva, intentos y avisos
-            (estilo y cifras a verificar). El PDF también está en los artefactos del run.
+            Revisa `informe.md` de cada carpeta: estado por diapositiva, intentos, avisos del
+            revisor (afirmaciones no respaldadas), de estilo y cifras a verificar. El PDF
+            también está en los artefactos del run.
