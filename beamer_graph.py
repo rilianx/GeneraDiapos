@@ -921,21 +921,29 @@ No transcribas. Devuelve un INVENTARIO breve:
 {secciones}
 {feedback}"""
 
-REVIEW_SLIDE_PROMPT = r"""Eres un revisor exigente. Verifica esta diapositiva contra el CONTEXTO, que \
-es la única fuente válida (fragmentos del paper).
+REVIEW_SLIDE_PROMPT = r"""Eres un revisor exigente y objetivo. Verifica esta diapositiva contra el \
+CONTEXTO, que es la única fuente válida (fragmentos del paper). Revísala como si la hubiera escrito \
+otra persona: que suene bien o coincida con lo que recuerdas del paper o del guion no la respalda.
 
 Enumera solo las afirmaciones sustantivas: hechos, cifras y a qué método/métrica/configuración \
 corresponden, comparaciones, causas y conclusiones. NO evalúes rótulos ni encabezados (títulos de \
-bloque, "Idea clave", "Contexto", nombres de sección), frases introductorias ni el formato LaTeX. \
-Una paráfrasis o resumen fiel de la fuente cuenta como respaldada, aunque use otras palabras. \
+bloque, "Idea clave", "Contexto", nombres de sección), frases introductorias ni el formato LaTeX.
+
+Para cada afirmación con una cifra, un método, una métrica o una comparación, localiza el pasaje o \
+la celda exacta de la fuente y cítalo textualmente en evidencia. Comprueba en particular:
+- que cada cifra sea de la fila, columna y tabla que dice la diapo (no de la vecina ni de otra tabla);
+- que los métodos no estén intercambiados y que la métrica sea la correcta (frente a quién es una \
+ganancia, qué mide la fila de totales);
+- el sentido de cada comparación, y que superlativos o cuantificadores ("el mejor", "siempre", \
+"la más cercana", "todas") no digan más que la fuente;
+- causas, conclusiones o trabajo futuro que la fuente no afirma como hecho.
 Veredictos:
-- respaldada: la fuente lo dice o se deduce directamente.
-- no_respaldada: una afirmación sustantiva que la fuente no contiene (p. ej. extensiones o \
-trabajo futuro inventados).
-- contradicha: SOLO si puedes citar el pasaje de la fuente que dice otra cosa (cifra atribuida al \
-método o métrica equivocada, trabajo futuro presentado como hecho, comparación invertida).
-En evidencia cita textualmente el pasaje de la fuente (para contradicha es obligatorio).
-Ante la duda, respaldada: un falso positivo cuesta un refinado innecesario.
+- respaldada: la fuente lo dice, lo parafrasea fielmente o se deduce directamente (un cálculo \
+simple con sus cifras: dilo en evidencia).
+- no_respaldada: no encuentras en la fuente el dato o la afirmación.
+- contradicha: la fuente dice otra cosa; cita ese pasaje.
+Una duda sobre la redacción no es un error; una duda sobre un dato sí: si no lo encuentras, no está \
+respaldado.
 
 Usa el ÍNDICE DE TABLAS (todas las tablas del paper, con sus encabezados) para comprobar que \
 cada cifra de una tabla o comparación corresponde a los métodos y métricas correctos: si una \
