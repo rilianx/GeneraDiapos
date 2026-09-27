@@ -9,6 +9,8 @@ para el flujo completo y las decisiones de diseño.
   modifica; `refine_global` solo edita el cuerpo entre `head` y `tail`.
 - Toda llamada a un LLM pasa por `call_text` o `call_structured`. Así el smoke
   test puede simularlas y el proveedor se cambia en un solo lugar (`_chat`).
+  Con `LLM_PROVIDER=claude` esas dos funciones hacen `interrupt()` (`pedir_a_claude`);
+  `driver_claude.py` solo transporta tareas y respuestas, no decide pasos.
 - Una diapo que compila nunca se descarta por estilo: queda con aviso.
   Si un refinado posterior rompe la compilación, se usa `best_frame` (la última que compiló).
 - Cada compilación ocurre en su propio directorio temporal, con

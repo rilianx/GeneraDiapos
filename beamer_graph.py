@@ -41,13 +41,16 @@ from langgraph.types import Command, Send, interrupt
 # Configuración
 # ----------------------------------------------------------------------------
 # Proveedor y modelos: se eligen con variables de entorno (o --proveedor en la CLI).
-#   LLM_PROVIDER=openai | anthropic
+#   LLM_PROVIDER=openai | anthropic | claude
+#     claude: sin API. Cada llamada al modelo pausa el grafo (interrupt) y deja una
+#     tarea en archivo para que la responda Claude Code; ver driver_claude.py.
 #   LLM_MODEL_OUTLINE / LLM_MODEL_SLIDES: nombres de modelo de tu cuenta
 # El guion es la decisión más importante: usa ahí tu modelo más capaz, y uno más
 # rápido/barato para las N diapositivas y los refinados.
 PROVIDER = os.environ.get("LLM_PROVIDER") or "openai"
 _DEFAULT_MODELS = {"anthropic": ("claude-opus-5-5", "claude-sonnet-5"),
-                   "openai": ("gpt-5.4-mini", "gpt-5.4-mini")}
+                   "openai": ("gpt-5.4-mini", "gpt-5.4-mini"),
+                   "claude": ("claude-code", "claude-code")}
 MODEL_OUTLINE = os.environ.get("LLM_MODEL_OUTLINE") or _DEFAULT_MODELS[PROVIDER][0]
 MODEL_SLIDES = os.environ.get("LLM_MODEL_SLIDES") or _DEFAULT_MODELS[PROVIDER][1]
 # Esfuerzo de razonamiento (solo OpenAI): low | medium | high. Vacío = el del modelo.
@@ -295,7 +298,14 @@ def registrar_uso(model: str, msg) -> None:
         d["salida"] += u.get("output_tokens", 0)
 
 
+def pedir_a_claude(payload: dict):
+    """Proveedor 'claude': pausa el grafo con la tarea; la respuesta llega al reanudar."""
+    return interrupt({"tipo_llm": True, **payload})
+
+
 def call_text(model: str, prompt: str) -> str:
+    if PROVIDER == "claude":
+        return strip_fences(pedir_a_claude({"formato": "texto", "prompt": prompt}))
     msg = _chat(model, REASONING_SLIDES).invoke(prompt)
     registrar_uso(model, msg)
     out = msg.content
@@ -306,6 +316,10 @@ def call_text(model: str, prompt: str) -> str:
 
 def call_structured(model: str, schema: type[BaseModel], prompt: str,
                     effort: str | None = None) -> BaseModel:
+    if PROVIDER == "claude":
+        data = pedir_a_claude({"formato": "json", "esquema": schema.__name__,
+                               "json_schema": schema.model_json_schema(), "prompt": prompt})
+        return schema.model_validate(restaurar_escapes(data))
     # function_calling tolera campos opcionales del esquema en ambos proveedores
     kw = {"method": "function_calling"} if PROVIDER == "openai" else {}
     res = _chat(model, effort).with_structured_output(schema, include_raw=True, **kw).invoke(prompt)
@@ -1062,7 +1076,8 @@ def review_outline(state: State) -> dict:
     """Punto de revisión humana: el guion es lo más barato de corregir."""
     if not state.get("human_review"):
         return {}
-    edited = interrupt({"outline": state["outline"]})
+    edited = interrupt({"outline": state["outline"], "chunks_tablas": {
+        c: t.splitlines()[0] for c, t in state["chunks"].items() if c.startswith("tab")}})
     if isinstance(edited, dict) and edited.get("slides"):
         return cargar_guion(state, edited)
     return {}
@@ -1086,7 +1101,7 @@ def fan_out(state: State) -> list[Send]:
 def assemble(state: State) -> dict:
     body, current = [], None
     slides = state["outline"]["slides"]
-    for idx, frame, status, _, _ in sorted(state["frames"]):
+    for idx, frame, status, _, _ in sorted(state["frames"], key=lambda f: f[0]):
         sec = slides[idx].get("section") or ""
         if slides[idx]["kind"] not in FIXED_KINDS and sec and sec != current:
             body.append(f"\\section{{{sec}}}")
@@ -1153,7 +1168,7 @@ def write_outputs(state: State) -> dict:
         lines.append("\n## Avisos del guion (revisar las tablas usadas)\n")
         lines += [f"- Diapo {i}: {w}" for i, ws in av.items() for w in ws]
     lines.append("\n| # | Diapositiva | Estado | Intentos | Avisos |\n|---|---|---|---|---|")
-    for idx, _, status, attempts, warns in sorted(state["frames"]):
+    for idx, _, status, attempts, warns in sorted(state["frames"], key=lambda f: f[0]):
         title = state["outline"]["slides"][idx]["title"].replace("|", "/")
         warns = [" ".join(w.replace("|", "/").split()) for w in warns]   # una celda de tabla md
         lines.append(f"| {idx} | {title} | {status} | {attempts} | {'<br>'.join(warns) or '-'} |")
@@ -1305,7 +1320,13 @@ def main() -> None:
     ap.add_argument("--solo-guion", metavar="JSON",
                     help="solo genera el guion y lo guarda en JSON (y una vista .md) para revisarlo")
     ap.add_argument("--guion", metavar="JSON", help="genera las diapos desde un guion ya revisado")
+    ap.add_argument("--claude", metavar="DIR",
+                    help="modo Claude Code (LLM_PROVIDER=claude): estado y tareas en DIR; "
+                         "vuelve a ejecutar con --claude DIR para continuar")
     args = ap.parse_args()
+    if args.claude:
+        from driver_claude import run
+        raise SystemExit(run(args))
     guion = json.loads(Path(args.guion).read_text()) if args.guion else {}
     args.source = args.source or guion.get("paper")
     if not args.source:

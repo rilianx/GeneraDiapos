@@ -2,5 +2,6 @@ langgraph>=1.0
 langchain-openai>=0.3
 langchain-anthropic>=1.0   # solo si usas Claude
 pydantic>=2
+langgraph-checkpoint-sqlite>=3   # modo Claude Code (estado entre ejecuciones)
 pymupdf4llm
 # opcional, mejor con ecuaciones: marker-pdf

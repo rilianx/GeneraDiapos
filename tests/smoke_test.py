@@ -62,6 +62,7 @@ assert bg.restaurar_escapes("a\n  \\item b") == "a\n  \\item b"   # saltos reale
 assert bg.restaurar_escapes("sistem\x00e1ticamente") == "sistemáticamente"
 assert bg.restaurar_escapes(r"\\texttt{a} y \\\\ b") == r"\texttt{a} y \\\\ b"   # solo antes de letras
 
+real_structured, real_text = bg.call_structured, bg.call_text
 bg.call_structured, bg.call_text = fake_structured, fake_text
 
 tmp = Path(tempfile.mkdtemp())
@@ -183,6 +184,39 @@ assert av[0][0].startswith("Menciona rr, que no aparecen en tab2")     # A sí e
 assert any("¿tab1 o tab2?" in w for w in av[1]) and any("dañada" in w for w in av[1])
 assert 2 not in av
 assert "⚠ Revisar primero" in bg.guion_md({"title": "T", **ol}, c, "p.pdf")
+
+# Modo Claude Code (LLM_PROVIDER=claude): el mismo grafo se pausa en cada llamada al
+# modelo, deja tareas en archivos y se reanuda al volver a ejecutar el driver
+import argparse
+import driver_claude
+bg.call_structured, bg.call_text = real_structured, real_text
+work = tmp / "claude"
+cli = argparse.Namespace(claude=str(work), source=str(tmp / "paper.tex"), out=str(tmp / "out_claude"),
+                         base=str(bg.DEFAULT_BASE), estilo=str(bg.DEFAULT_STYLE), extractor="pymupdf",
+                         review=True, guion=None, concurrency=2)
+rounds = 0
+while (code := driver_claude.run(cli)) == 3:
+    rounds += 1
+    assert rounds < 20, "el modo claude no terminó"
+    for t in json.loads((work / "pendientes.json").read_text()):
+        prompt = Path(t["tarea"]).read_text().split("---\n\n", 1)[1].split("\n\n---\n")[0]
+        if t["tipo"] == "guion":
+            ans = (work / "guion.json").read_text()
+        elif t["tipo"] == "json":
+            ans = fake_structured("claude", getattr(bg, t["esquema"]), prompt).model_dump_json()
+        else:
+            ans = fake_text("claude", prompt)
+        Path(t["respuesta"]).write_text(ans)
+assert code == 0 and (tmp / "out_claude" / "presentacion.pdf").exists()
+assert (work / "guion.md").exists() and rounds >= 3      # guion, revisión humana, diapos...
+# una respuesta que no cumple el esquema no se acepta
+bad = driver_claude.leer_respuestas([{"id": "x", "tarea": "t", "respuesta": str(tmp / "mal.json"),
+                                      "tipo": "json", "esquema": "Review"}], {})
+(tmp / "mal.json").write_text('{"otra": 1}')
+_, _, errs = driver_claude.leer_respuestas([{"id": "x", "tarea": "t", "respuesta": str(tmp / "mal.json"),
+                                             "tipo": "json", "esquema": "Review"}], {})
+assert errs and bad[1] == ["t"]
+bg.PROVIDER = "openai"
 
 # Consumo de tokens: se acumula por modelo y aparece en el informe
 class _Msg:

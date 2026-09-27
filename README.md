@@ -167,21 +167,25 @@ revisado (campo `guion`).
 En local lo equivalente es `--solo-guion guiones/x.json` y luego `--guion guiones/x.json`
 (o `--review`, que pausa en la terminal).
 
-## Alternativa: skill de Claude
+## Modo Claude Code (sin API)
 
-`.claude/skills/paper2beamer/` hace lo mismo conversando con Claude (Claude Code o
-claude.ai): Claude lee el paper completo **como imagen, página por página** (las tablas
-rotadas o partidas no se rompen), propone el guion para que lo apruebes, escribe la
-presentación sobre tu `base.tex` y la valida con
+El mismo grafo puede correr **dentro de Claude Code**, con tu suscripción y sin API
+key: con `--claude DIR` (proveedor `claude`), cada llamada al modelo pausa el grafo
+(`interrupt` de LangGraph), el estado queda en `DIR/estado.sqlite` y la tarea se
+escribe en `DIR/tareas/`. Claude la responde en `DIR/respuestas/` y, al volver a
+ejecutar el comando, el grafo valida la respuesta y continúa donde iba. Las
+validaciones, reintentos, revisor, secciones e informe son exactamente los del
+pipeline; solo cambia quién responde.
 
 ```bash
-python .claude/skills/paper2beamer/validar.py presentaciones/<nombre>/presentacion.tex --paper <paper>
+python beamer_graph.py papers/x.pdf --claude trabajo/x --out presentaciones/x --review
+python beamer_graph.py --claude trabajo/x      # repetir hasta que diga "Listo"
 ```
 
-que reutiliza los chequeos del pipeline: compilación por diapositiva, lint, reglas de
-`estilo.toml`, filas o columnas de tabla copiadas o vacías, portada/agenda/secciones,
-preámbulo de la base intacto y cifras que no aparecen en el paper. Conviene para pocos
-papers con revisión cuidadosa; el pipeline, para lotes desatendidos.
+En Claude Code basta con pedir "haz la presentación de papers/x.pdf": la skill
+`.claude/skills/paper2beamer/` sigue ese ciclo (y lee como imagen las páginas con
+tablas al armar el guion). `validar.py`, en la misma carpeta, aplica los chequeos a
+un `.tex` editado a mano.
 
 ## Configuración
 
