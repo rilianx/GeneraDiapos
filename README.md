@@ -167,6 +167,22 @@ revisado (campo `guion`).
 En local lo equivalente es `--solo-guion guiones/x.json` y luego `--guion guiones/x.json`
 (o `--review`, que pausa en la terminal).
 
+## Alternativa: skill de Claude
+
+`.claude/skills/paper2beamer/` hace lo mismo conversando con Claude (Claude Code o
+claude.ai): Claude lee el paper completo **como imagen, página por página** (las tablas
+rotadas o partidas no se rompen), propone el guion para que lo apruebes, escribe la
+presentación sobre tu `base.tex` y la valida con
+
+```bash
+python .claude/skills/paper2beamer/validar.py presentaciones/<nombre>/presentacion.tex --paper <paper>
+```
+
+que reutiliza los chequeos del pipeline: compilación por diapositiva, lint, reglas de
+`estilo.toml`, filas o columnas de tabla copiadas o vacías, portada/agenda/secciones,
+preámbulo de la base intacto y cifras que no aparecen en el paper. Conviene para pocos
+papers con revisión cuidadosa; el pipeline, para lotes desatendidos.
+
 ## Configuración
 
 | Qué | Dónde | Notas |
