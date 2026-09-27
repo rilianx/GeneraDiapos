@@ -54,6 +54,7 @@ def fake_text(model, prompt):
             return r"\begin{frame}{Método}$x\in\R^n$ y \[L(x,\lambda)\]\end{frame}"
         return r"\begin{frame}{Resultados}Ganancia 1.43 en 76 instancias.\end{frame}"
     title = "Método" if "Título: Método" in prompt else "Resultados"
+    calls["write"][title] = prompt
     if title == "Método":                              # error: macro inexistente
         return r"\begin{frame}{Método}$\noexiste{x}$\end{frame}"
     wide = r"\[" + "+".join(["x_{%d}" % i for i in range(80)]) + r"\]"
@@ -81,7 +82,13 @@ assert "__interrupt__" in res, "debía pausar para revisión"
 edited = res["__interrupt__"][0].value["outline"]
 assert [s["kind"] for s in edited["slides"]][:2] == ["title", "agenda"]   # portada y agenda
 edited["slides"][3]["title"] = "Resultados"
+edited["slides"][3]["aviso"] = "la ganancia sale del texto, no de una tabla"
 res = graph.invoke(Command(resume=edited), cfg)
+# Cada diapo recibe su sección, su aviso y el guion completo con ella marcada
+p_met, p_res = calls["write"]["Método"], calls["write"]["Resultados"]
+assert "(sección: Propuesta)" in p_met and "→ 2. Método" in p_met and "  3. Resultados" in p_met
+assert "[Experimentos]" in p_met and "Portada" not in p_met.split("Guion completo")[1].split("Título:")[0]
+assert "Aviso del guion" in p_res and "sale del texto" in p_res and "Aviso del guion" not in p_met
 
 print("chunks:", list(res["chunks"]))
 print("refinados:", calls["refine"])

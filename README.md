@@ -217,7 +217,8 @@ Opciones de la CLI: `python beamer_graph.py --help`.
 3. **Recuperación estructural, no RAG.** El paper se trocea por secciones, y las
    ecuaciones, tablas y algoritmos quedan como fragmentos propios (`eq1`, `tab2`,
    `alg1`). El guion (que sí ve el paper completo) asigna a cada diapo los IDs que
-   necesita, y cada diapo recibe solo esos. Es trazable y recupera bien tablas y
+   necesita, y cada diapo recibe solo esos, junto con su sección, su aviso del guion y
+   la lista de títulos de todo el guion (para no repetir a las vecinas). Es trazable y recupera bien tablas y
    fórmulas, que la búsqueda semántica recupera mal. RAG tendría sentido con
    varios papers o documentos muy largos.
 4. **Cada diapo se compila sola**, con la cabecera real de la base, en su propio

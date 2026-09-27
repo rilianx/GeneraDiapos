@@ -295,6 +295,7 @@ class SlideState(TypedDict, total=False):
     context_cifras: str     # modo claude: capa de texto completa para el chequeo de cifras
     figuras_dir: str
     tables: str             # índice de todas las tablas (título y encabezados)
+    plan: str               # títulos del guion completo, con esta diapo marcada
     style_errors: list[str]
     fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
     reviews: int            # revisiones hechas (presupuesto propio, no gasta attempts)
@@ -867,10 +868,14 @@ Ejemplo de formato para este tipo (solo la estructura; el contenido es inventado
 {kind_example}
 Puedes combinar con un alertblock o exampleblock para el mensaje clave si cabe.
 
+Lugar en la presentación (sección: {section}). Guion completo, esta diapo marcada con →; \
+no repitas lo que cubren las otras:
+{plan}
+
 Título: {title}
 Contenido a cubrir (ideas y datos, no viñetas literales):
 {bullets}
-
+{aviso}
 CONTEXTO:
 {context}"""
 
@@ -1372,6 +1377,19 @@ def review_outline(state: State) -> dict:
     return {}
 
 
+def plan_guion(slides: list[dict], idx: int) -> str:
+    """Títulos del guion por sección, con la diapo idx marcada: evita repetir a las vecinas."""
+    out, sec = [], None
+    for i, sl in enumerate(slides):
+        if sl["kind"] in FIXED_KINDS:
+            continue
+        if (sl.get("section") or "") != sec:
+            sec = sl.get("section") or ""
+            out.append(f"[{sec or '-'}]")
+        out.append(f"{'→' if i == idx else ' '} {i}. {sl['title']}")
+    return "\n".join(out)
+
+
 def fan_out(state: State) -> list[Send]:
     o, chunks = state["outline"], state["chunks"]
     base = load_base(state)
@@ -1384,7 +1402,7 @@ def fan_out(state: State) -> list[Send]:
         "context_cifras": state.get("texto", "") if PROVIDER == "claude" else "",
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
         "figuras_dir": state.get("figuras_dir", ""),
-        "tables": indice_tablas(chunks),
+        "tables": indice_tablas(chunks), "plan": plan_guion(o["slides"], i),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
         "warnings": [],
     }) for i, s in enumerate(o["slides"])]
@@ -1479,7 +1497,10 @@ def write_slide(s: SlideState) -> dict:
         macros=s["macros"], packages=s["packages"], guide=s["style_guide"],
         limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"],
         kind_desc=KINDS[spec["kind"]][0], kind_example=KINDS[spec["kind"]][1], title=spec["title"],
-        bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"]))
+        bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"],
+        section=spec.get("section") or "-", plan=s.get("plan") or "-",
+        aviso=(f"Aviso del guion (tenlo en cuenta al elegir las cifras): {spec['aviso']}\n"
+               if spec.get("aviso") else "")))
     return {"frame": frame}
 
 
