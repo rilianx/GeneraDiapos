@@ -121,6 +121,17 @@ def etiqueta(p: dict) -> str:
     return "tarea"
 
 
+MARCA_RECHAZO = "CORRIGE estos problemas del intento anterior:"
+
+
+def motivo_rechazo(prompt: str) -> str:
+    """Si el nodo volvió a pedir la tarea porque su validación rechazó la respuesta (el prompt
+    trae el feedback), los problemas que dio; si no, ""."""
+    if MARCA_RECHAZO not in prompt:
+        return ""
+    return prompt.split(MARCA_RECHAZO, 1)[1].strip().split("\n\n")[0].strip()
+
+
 def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]:
     tareas = d / "tareas"
     for f in tareas.glob("*.md"):
@@ -166,14 +177,23 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
                 cuerpo += "\n\n---\nResponde SOLO con el contenido pedido (sin explicación ni ```)."
         resp = d / "respuestas" / f"{it.id}.{ext}"
         name = f"{n:02d}_{re.sub(r'[^a-z-]', '', tag.split(' ')[0])}_{it.id[:8]}.md"
+        rechazo = motivo_rechazo(p.get("prompt", ""))
+        cab_rechazo = ""
+        if rechazo:
+            # el nodo reusa el id: la respuesta rechazada ocuparía el lugar de la nueva
+            previa = resp.with_suffix(".rechazada" + resp.suffix)
+            if resp.exists():
+                resp.replace(previa)
+            cab_rechazo = (f"\n\n**El pipeline rechazó tu respuesta anterior** (está en `{previa}`): "
+                           f"corrígela y escríbela de nuevo en el archivo de Respuesta.\n{rechazo}")
         if tag == "revisar-afirmaciones" and revisor() == "subagente":
             cuerpo = revision_independiente() + "\n\n" + cuerpo
-        archivos.append((tareas / name, f"# {tag}\n\nRespuesta: `{resp}`\nPaper: `{meta['paper']}`",
+        archivos.append((tareas / name, f"# {tag}\n\nRespuesta: `{resp}`\nPaper: `{meta['paper']}`" + cab_rechazo,
                          cuerpo))
         pend.append({"id": it.id, "tarea": str(tareas / name), "respuesta": str(resp),
                      "etiqueta": tag.split(" ")[0],
                      "tipo": "guion" if "outline" in p else p["formato"],
-                     "esquema": p.get("esquema")})
+                     "esquema": p.get("esquema"), "rechazo": rechazo})
     cuerpos, comun = compactar([c for _, _, c in archivos])
     if comun:
         (d / COMUN).write_text(
@@ -291,6 +311,9 @@ def listo(graph, cfg, meta: dict, d: Path | None = None) -> int:
 
 
 def informar(pend: list[dict]) -> None:
+    for t in pend:
+        if t.get("rechazo"):
+            print(f"RESPUESTA RECHAZADA por el pipeline (corrígela): {t['tarea']}\n{t['rechazo']}")
     print(f"{len(pend)} tarea(s) pendiente(s):")
     for t in pend:
         print(f"- {t['tarea']}  →  {t['respuesta']}")

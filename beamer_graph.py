@@ -31,6 +31,7 @@ import tempfile
 import threading
 import time
 import tomllib
+import unicodedata
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -625,6 +626,10 @@ def registrar_uso(model: str, msg) -> None:
         d["llamadas"] += 1
         d["entrada"] += u.get("input_tokens", 0)
         d["salida"] += u.get("output_tokens", 0)
+
+
+class RespuestasAgotadas(RuntimeError):
+    """El modelo no dio una respuesta válida en los intentos que tiene el nodo."""
 
 
 def pedir_a_claude(payload: dict):
@@ -1526,6 +1531,8 @@ def asegurar_portada(o: Outline, lim: dict) -> Outline:
 
 
 def _tokens(t: str) -> set[str]:
+    # NFKC: la capa de texto del PDF trae ligaduras (ﬁ, ﬂ) que partirían las palabras
+    t = re.sub(r"(\w)-\n(\w)", r"\1\2", unicodedata.normalize("NFKC", t))   # cortes de línea con guion
     return {w for w in re.split(r"[^0-9a-záéíóúñ]+", t.lower()) if len(w) > 1}
 
 
@@ -1572,7 +1579,7 @@ def lectura(state: State) -> dict:
             break
         feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs) + "\n"
     else:
-        raise RuntimeError(f"Lectura inválida tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
+        raise RespuestasAgotadas(f"Lectura inválida tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
     out = {c: t for c, t in chunks.items() if c.startswith(("sec", "fig", "x"))}
     pags = {sc.id: sc.paginas for sc in le.secciones}
     for c in out:
@@ -1706,7 +1713,7 @@ def outline(state: State) -> dict:
             head, tail = split_base(base, d)
             return {"outline": d, "head": head, "tail": tail}
         feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs + soft) + "\n"
-    raise RuntimeError(f"Outline inválido tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
+    raise RespuestasAgotadas(f"Outline inválido tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
 
 
 def cargar_guion(state: State, data: dict) -> dict:
@@ -2472,6 +2479,11 @@ def main() -> None:
         from driver_claude import run
         try:
             raise SystemExit(run(args))
+        except RespuestasAgotadas as e:          # las respuestas, no el código
+            print(f"RESPUESTAS AGOTADAS: {e}\nSe rechazaron todos los intentos de esa tarea. Muéstrale "
+                  "estos problemas al usuario y detente: para reintentar hay que empezar de nuevo (el "
+                  "primer comando, con el paper). No modifiques el código.")
+            raise SystemExit(1)
         except Exception as e:                   # fallo del pipeline, no de una respuesta
             import traceback
             log = Path(args.claude) / "error.log"

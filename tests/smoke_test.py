@@ -364,7 +364,7 @@ work = tmp / "claude"
 cli = argparse.Namespace(claude=str(work), source=str(tmp / "paper.tex"), out=str(tmp / "out_claude"),
                          base=str(bg.DEFAULT_BASE), estilo=str(bg.DEFAULT_STYLE), extractor="pymupdf",
                          review=True, guion=None, concurrency=2)
-rounds, comunes, editado_mal = 0, 0, None
+rounds, comunes, editado_mal, rechazos = 0, 0, None, 0
 import contextlib, io
 while True:
     salida = io.StringIO()
@@ -374,6 +374,8 @@ while True:
     if "no valida" in salida.getvalue():          # guion.md inválido: el mensaje es para la persona
         assert "Es su archivo" in salida.getvalue() and "RESPUESTA INVÁLIDA" not in salida.getvalue()
         guion_invalido_visto = True
+    if "RESPUESTA RECHAZADA por el pipeline" in salida.getvalue():
+        rechazos += 1
     if code != 3:
         break
     rounds += 1
@@ -381,6 +383,10 @@ while True:
     for t in json.loads((work / "pendientes.json").read_text()):
         tarea = Path(t["tarea"]).read_text()
         comunes += tarea.count("[bloque común")
+        if t.get("rechazo"):                          # la anterior se aparta: no se vuelve a leer
+            assert not Path(t["respuesta"]).exists() and "rechazó tu respuesta anterior" in tarea
+            assert "No existe 'Table 7'" in t["rechazo"] and Path(t["respuesta"]).with_suffix(
+                ".rechazada.json").exists()
         prompt = driver_claude.expandir(tarea, work / driver_claude.COMUN)
         if t["esquema"] == "Review":                  # por defecto se revisa Claude mismo
             assert "PARA QUIEN COORDINA" not in prompt and "como si la hubiera escrito otra persona" in prompt
@@ -404,6 +410,7 @@ assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revis
 # validar_lectura rechazó el 1er inventario: el nodo repite la pregunta (mismo id de
 # interrupt) y el driver debe reanudar bien, no declarar «Listo» sin hacer nada
 assert calls["lectura"] == 2
+assert rechazos == 1, "el rechazo del inventario debía anunciarse en la salida"
 assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
 assert "Errores que los validadores detectaron" in calls["write"]["Método"], \
     "los errores frecuentes de ejecuciones anteriores debían avisarse en el prompt"
@@ -512,6 +519,20 @@ assert not (tmp / "out_claude" / "presentacion.pdf").exists() and not (tmp / "ou
 assert (tmp / "out_claude" / "mio.txt").read_text() == "no tocar"
 bg.PROVIDER = "claude"
 assert driver_claude.run(cli) == 3 and "lectura" in (work / "pendientes.json").read_text()  # corrida nueva
+# Si se insiste con un inventario que no valida, se agota: error propio (no «fallo del pipeline»)
+malo = bg.Lectura(tablas=[bg.TablaLeida(numero=7, pagina=1, titulo="t", encabezados=["x"], metodos=["y"],
+                                        que_mide="z")], algoritmos=[], ecuaciones=[], secciones=[])
+cli.source = None
+try:
+    for _ in range(bg.MAX_OUTLINE_ATTEMPTS):
+        t = json.loads((work / "pendientes.json").read_text())[0]
+        Path(t["respuesta"]).write_text(malo.model_dump_json())
+        with contextlib.redirect_stdout(io.StringIO()):
+            driver_claude.run(cli)
+    raise AssertionError("debía agotarse")
+except bg.RespuestasAgotadas as e:
+    assert "No existe 'Table 7'" in str(e)
+cli.source = str(tmp / "paper.tex")
 bg.PROVIDER = "openai"
 
 # Guion como documento editable: ida y vuelta a través de un editor de markdown simulado

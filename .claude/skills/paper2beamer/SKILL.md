@@ -33,13 +33,14 @@ Si están las herramientas `paper2beamer` (MCP), antes de guardar una diapositiv
 puedes probar el DOT con `dibujar_diagrama`, y `ver_pagina` muestra una página del paper.
 Así el pipeline no gasta rondas en refinar.
 
-Si una respuesta no valida, el comando lo dice: corrige ese archivo y vuelve a ejecutarlo.
+Si una respuesta no valida, el comando lo dice («RESPUESTA INVÁLIDA» o «RESPUESTA RECHAZADA»,
+con los problemas): corrígela, escríbela en el archivo de respuesta y vuelve a ejecutarlo.
 Al terminar, muestra `presentaciones/<nombre>/presentacion.pdf` y los avisos de `informe.md`.
 
 Reglas (el pipeline ya valida y reintenta; tu trabajo es solo responder):
 - No modifiques código ni configuración (`*.py`, `base.tex`, `estilo.toml`, tests) ni
   instales nada. No leas el README ni el código: no hace falta.
-- Si el comando falla con algo que no sea «RESPUESTA INVÁLIDA», muestra el error al
+- Si el comando falla con algo que no sea «RESPUESTA INVÁLIDA» o «RESPUESTA RECHAZADA», muestra el error al
   usuario y detente; no intentes repararlo.
   Si el error es un módulo o comando que falta, sugiere `python verificar.py`.
 - Responde todas las tareas de la ronda y recién entonces vuelve a ejecutar el comando.
