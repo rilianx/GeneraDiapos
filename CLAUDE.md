@@ -39,6 +39,8 @@ para el flujo completo y las decisiones de diseño.
 - Diagramas: `render_diagrama` / `expandir_diagramas` (DOT → `figuras/diag_<hash>.pdf/.png`, estilo
   `DIAGRAMA_ESTILO`), se expanden en `compile_slide`, `assemble` y `exportar_pptx`; el frame guardado
   conserva el DOT (lo ven el revisor y los refinados)
+- MCP (`mcp_servidor.py`, `.mcp.json`): herramientas de solo lectura (`validar_frame`,
+  `dibujar_diagrama`, `ver_pagina`) que reusan las funciones del pipeline; no escriben estado ni registro
 - Fuentes y pedido: `fragmentos_extra` (`--extra`, ids `x{n}…`), `bloque_instrucciones` (`--instrucciones`,
   en `OUTLINE_PROMPT` y `SLIDE_PROMPT`), `regla_secciones` (secciones libres o las de `estilo.toml`),
   `tex_a_pptx` (`--a-pptx`)

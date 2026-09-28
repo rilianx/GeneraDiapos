@@ -187,6 +187,20 @@ if bg.hay_graphviz():
     assert any("nodos" in x for x in a_g)
     assert "diagram" in bg.kinds_disponibles()
 
+# Herramientas MCP (si está el paquete): validar_frame dice lo mismo que el pipeline
+try:
+    import mcp_servidor
+except ImportError:
+    mcp_servidor = None
+if mcp_servidor:
+    n_log = len(bg.leer_errores())
+    ok_ = mcp_servidor.validar_frame(r"\begin{frame}{Corto}\begin{itemize}\item a\item b\end{itemize}\end{frame}", "bullets")
+    assert json.loads(ok_[0])["compila"] and len(ok_) == 2            # diagnóstico + imagen
+    mal_ = json.loads(mcp_servidor.validar_frame(r"\begin{frame}{X}$\noexiste$\end{frame}", "bullets")[0])
+    assert not mal_["compila"] and "noexiste" in mal_["errores"][0]
+    assert len(bg.leer_errores()) == n_log                               # solo lectura: no anota en el registro
+    assert json.loads(mcp_servidor.dibujar_diagrama("digraph{a->}")[0])["errores"]
+
 # Secciones libres: toda diapo con sección y cada sección con diapos seguidas; fijas: las de estilo.toml
 libre = dict(bg.STYLE_DEFAULTS)
 sec = lambda n: bg.SlideSpec(title="T", bullets=["x"], kind="block", sources=["sec1"], section=n)

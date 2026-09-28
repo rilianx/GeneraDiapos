@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "paper2beamer": {
+      "command": "sh",
+      "args": ["-c", "cd \"${CLAUDE_PROJECT_DIR:-.}\" && if [ -x .venv/bin/python ]; then exec .venv/bin/python mcp_servidor.py; else exec python3 mcp_servidor.py; fi"]
+    }
+  }
+}

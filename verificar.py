@@ -25,6 +25,7 @@ PAQUETES = [
     ("langchain_openai", "langchain-openai", "proveedor OpenAI (API)", False),
     ("langchain_anthropic", "langchain-anthropic", "proveedor Anthropic (API)", False),
     ("pptx", "python-pptx", "--pptx / --a-pptx", False),
+    ("mcp.server.fastmcp", "mcp<2", "herramientas MCP para Claude Code (mcp_servidor.py)", False),
 ]
 # (archivo de TeX, para qué)
 TEX = [("beamer.cls", "beamer"), ("beamerthememetropolis.sty", "tema metropolis"),

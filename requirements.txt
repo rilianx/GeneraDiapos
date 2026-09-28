@@ -7,3 +7,4 @@ pymupdf4llm
 # opcional, mejor con ecuaciones: marker-pdf
 python-pptx>=1.0          # --pptx
 pypandoc_binary>=1.13     # --pptx: pandoc para las fórmulas (OMML)
+mcp>=1.2,<2               # herramientas MCP para Claude Code (mcp_servidor.py)
