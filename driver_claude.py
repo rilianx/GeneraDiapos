@@ -193,6 +193,17 @@ def leer_respuestas(pend: list[dict], values: dict) -> tuple[dict, list[str], li
     return ans, faltan, errores
 
 
+def listo(graph, cfg, meta: dict) -> int:
+    """Solo se declara terminado si el grafo terminó de verdad y dejó el PDF."""
+    snap = graph.get_state(cfg)
+    pdf = Path(meta["out"]) / "presentacion.pdf"
+    if snap.next or any(t.interrupts for t in snap.tasks) or not pdf.exists():
+        raise RuntimeError(f"el grafo quedó sin terminar (siguiente: {snap.next or '-'}, "
+                           f"PDF {'sí' if pdf.exists() else 'no'} existe)")
+    print(f"Listo: {pdf} (ver {Path(meta['out']) / 'informe.md'})")
+    return 0
+
+
 def informar(pend: list[dict]) -> None:
     print(f"{len(pend)} tarea(s) pendiente(s):")
     for t in pend:
@@ -224,9 +235,8 @@ def run(args) -> int:
         result = graph.invoke(state, cfg)
     else:
         meta = json.loads(meta_f.read_text())
-        if not snap.next:
-            print(f"Listo: {meta['out']}/presentacion.pdf (ver {meta['out']}/informe.md)")
-            return 0
+        if not snap.next and not any(t.interrupts for t in snap.tasks):
+            return listo(graph, cfg, meta)
         pend = json.loads((d / PENDIENTES).read_text())
         ans, faltan, errores = leer_respuestas(pend, snap.values)
         for e in errores:
@@ -234,11 +244,14 @@ def run(args) -> int:
         if faltan or errores:
             informar([t for t in pend if t["id"] not in ans])
             return 3
-        result = graph.invoke(Command(resume=ans), cfg)
+        # Un nodo que repite su pregunta (p. ej. validar_lectura rechazó el inventario) reusa
+        # el id del interrupt: reanudar con {id: valor} deja el grafo roto. Con una sola tarea
+        # pendiente (el único caso en que eso pasa) se reanuda con el valor.
+        resume = next(iter(ans.values())) if len(pend) == 1 else ans
+        result = graph.invoke(Command(resume=resume), cfg)
 
     interrupts = result.get("__interrupt__", [])
     if interrupts:
         informar(escribir_tareas(d, interrupts, meta, graph.get_state(cfg).values))
         return 3
-    print(f"Listo: {meta['out']}/presentacion.pdf (ver {meta['out']}/informe.md)")
-    return 0
+    return listo(graph, cfg, meta)

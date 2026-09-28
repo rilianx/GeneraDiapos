@@ -28,6 +28,10 @@ calls = {"write": {}, "refine": 0, "review": 0}
 def fake_structured(model, schema, prompt, effort=None):
     if schema is bg.Lectura:                           # modo claude: inventario de lo leído
         calls["lectura"] = calls.get("lectura", 0) + 1
+        if calls["lectura"] == 1:                      # 1er intento: una tabla que no existe
+            return bg.Lectura(tablas=[bg.TablaLeida(numero=7, pagina=1, titulo="t", encabezados=["x"],
+                                                    metodos=["y"], que_mide="z")],
+                              algoritmos=[], ecuaciones=[], secciones=[])
         return bg.Lectura(tablas=[], algoritmos=[], secciones=[], ecuaciones=[
             bg.ElementoLeido(id="eq1", pagina=1, titulo="Lagrangiano",
                              latex=r"L(x,\lambda)=f(x)+\sum_j \lambda_j g_j(x)")])
@@ -231,7 +235,9 @@ while (code := driver_claude.run(cli)) == 3:
         Path(t["respuesta"]).write_text(ans)
 assert code == 0 and (tmp / "out_claude" / "presentacion.pdf").exists()
 assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revisión, diapos...
-assert calls["lectura"] == 1
+# validar_lectura rechazó el 1er inventario: el nodo repite la pregunta (mismo id de
+# interrupt) y el driver debe reanudar bien, no declarar «Listo» sin hacer nada
+assert calls["lectura"] == 2
 assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
 # LLM_REVISOR=subagente: la revisión pide un solo subagente independiente para la ronda
 import os
