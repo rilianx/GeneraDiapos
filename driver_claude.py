@@ -34,6 +34,15 @@ COMUN = "comun.md"
 MIN_COMUN = 150          # un párrafo más corto no vale la pena compartirlo
 
 
+def modo_guion() -> str:
+    """LLM_GUION: "archivo" (defecto) deja DIR/guion.md para editarlo en tu editor (LaTeX
+    tal cual, fórmulas $…$); "docs" lo pasa a un documento de Claude Docs."""
+    m = (os.environ.get("LLM_GUION") or "archivo").strip().lower()
+    if m not in ("archivo", "docs"):
+        raise SystemExit(f"LLM_GUION debe ser 'archivo' o 'docs', no {m!r}")
+    return m
+
+
 def revisor() -> str:
     """LLM_REVISOR: "self" (defecto) revisa Claude mismo, casi sin costo porque el paper ya está
     en su contexto; "subagente" delega todas las revisiones de la ronda en un subagente
@@ -119,9 +128,20 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
             ext = "md"
             chunks = values.get("chunks", {})
             (d / "guion.json").write_text(json.dumps(p["outline"], ensure_ascii=False, indent=2))
-            (d / "guion.md").write_text(bg.guion_md(p["outline"], chunks, meta["paper"]))
-            (d / "guion_doc.md").write_text(bg.guion_doc_md(p["outline"], chunks))
-            cuerpo = (
+            if modo_guion() == "archivo":
+                (d / "guion.md").write_text(bg.guion_doc_md(p["outline"], chunks, crudo=True))
+                cuerpo = (
+                    "Revisión humana del guion, en un archivo markdown.\n\n"
+                    f"1. Dile al usuario, en dos líneas, que abra `{(d / 'guion.md').resolve()}` en su "
+                    "editor (en VS Code, Ctrl+Shift+V muestra la vista previa con las fórmulas), que lo "
+                    "edite a su gusto y que te avise cuando lo apruebe.\n"
+                    "2. ESPERA su respuesta: no asumas la aprobación ni edites tú el archivo, salvo que "
+                    "te pida un cambio concreto.\n"
+                    "3. Cuando apruebe, escribe solo la palabra «aprobado» en el archivo de respuesta: "
+                    "el pipeline lee el guion.md editado con código y lo valida.")
+            else:
+                (d / "guion_doc.md").write_text(bg.guion_doc_md(p["outline"], chunks))
+                cuerpo = (
                 "Revisión humana del guion, en un documento editable.\n\n"
                 f"1. Si tienes el conector de documentos de Claude (Claude Docs), crea un documento con el "
                 f"contenido EXACTO de `{d}/guion_doc.md` (sin reescribirlo) y da el link al usuario: puede "
@@ -174,6 +194,8 @@ def leer_respuestas(pend: list[dict], values: dict) -> tuple[dict, list[str], li
             ans[t["id"]] = raw
             continue
         try:
+            if t["tipo"] == "guion" and raw.strip().lower().startswith("aprobado"):
+                raw = (f.parent.parent / "guion.md").read_text()     # el archivo que editó el usuario
             if f.suffix == ".md":                        # guion editado como documento
                 data = bg.guion_desde_md(raw)
             else:
@@ -245,9 +267,11 @@ def run(args) -> int:
             informar([t for t in pend if t["id"] not in ans])
             return 3
         # Un nodo que repite su pregunta (p. ej. validar_lectura rechazó el inventario) reusa
-        # el id del interrupt: reanudar con {id: valor} deja el grafo roto. Con una sola tarea
-        # pendiente (el único caso en que eso pasa) se reanuda con el valor.
-        resume = next(iter(ans.values())) if len(pend) == 1 else ans
+        # el id del interrupt: reanudar con {id: valor} deja el grafo roto. Eso solo pasa cuando
+        # el grafo tiene un único interrupt pendiente, y entonces se reanuda con el valor. Con
+        # diapos en paralelo el grafo puede listar varios (de un mismo paso) aunque la ronda
+        # tenga una sola tarea: ahí se reanuda por id.
+        resume = next(iter(ans.values())) if len(pend) == 1 and len(snap.interrupts) == 1 else ans
         result = graph.invoke(Command(resume=resume), cfg)
 
     interrupts = result.get("__interrupt__", [])

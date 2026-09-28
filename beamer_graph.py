@@ -1288,35 +1288,42 @@ def _esc_md(t: str) -> str:
                    else re.sub(r"([\\*_])", r"\\\1", x) for x in parts)
 
 
-def guion_doc_md(outline: dict, chunks: dict) -> str:
-    """Guion como documento editable (Claude Docs u otro editor de markdown). Formato fijo,
-    pensado para editarse a mano y volver a leerse con guion_desde_md."""
+MARCA_CRUDO = "<!-- guion en markdown crudo: el LaTeX va tal cual y las fórmulas entre $…$ -->"
+
+
+def guion_doc_md(outline: dict, chunks: dict, crudo: bool = False) -> str:
+    """Guion como documento editable, pensado para editarse a mano y volver a leerse con
+    guion_desde_md. crudo=False: para Claude Docs (escapa * _ \ y pone las fórmulas como
+    código, porque el editor no acepta matemática en línea). crudo=True: para editarlo como
+    archivo (VS Code, GitHub): LaTeX tal cual y fórmulas $…$, que la vista previa muestra."""
     lim = STYLE_DEFAULTS
-    out = [f"# Guion: {_esc_md(outline['title'])}", ""]
+    _esc_md_ = (lambda t: t) if crudo else _esc_md
+    out = ([MARCA_CRUDO, ""] if crudo else []) + [f"# Guion: {_esc_md_(outline['title'])}", ""]
     for k, v in _META.items():
-        out += [f"{k}: {_esc_md(outline[v])}", ""]
+        out += [f"{k}: {_esc_md_(outline[v])}", ""]
     out += ["", "Edita libremente: textos, viñetas, y borra o mueve secciones «## N. …». Mantén en cada "
             "diapo la línea «Sección: … · Tipo: … · Fuentes: …». Secciones: "
             + ", ".join(lim["secciones"]) + ". Tipos: " + ", ".join(KINDS) + ". Fuentes: ids de la "
-            "lista de abajo. La portada y la agenda se agregan solas.", ""]
+            "lista de abajo. La portada y la agenda se agregan solas."
+            + (" Escribe el LaTeX tal cual; las fórmulas, entre $…$." if crudo else ""), ""]
     avisos = avisos_guion(outline, chunks)
     if avisos:
         out += ["## ⚠ Revisar primero", ""]
-        out += [f"- Diapo {i} ({_esc_md(outline['slides'][i]['title'])}): {_esc_md(w)}"
+        out += [f"- Diapo {i} ({_esc_md_(outline['slides'][i]['title'])}): {_esc_md_(w)}"
                 for i, ws in avisos.items() for w in ws]
         out.append("")
     out += ["## Fuentes disponibles", ""]
-    out += [f"- {c}: {_esc_md(re.sub(r'[*_]{2,}', '', t.splitlines()[0]))}" for c, t in chunks.items()]
+    out += [f"- {c}: {_esc_md_(re.sub(r'[*_]{2,}', '', t.splitlines()[0]))}" for c, t in chunks.items()]
     out.append("")
     for i, sl in enumerate(outline["slides"]):
         if sl["kind"] in FIXED_KINDS:
             continue
-        out += [f"## {i}. {_esc_md(sl['title'])}", ""]
+        out += [f"## {i}. {_esc_md_(sl['title'])}", ""]
         out.append(f"Sección: {sl.get('section') or '-'} · Tipo: {sl['kind']} · Fuentes: {', '.join(sl['sources'])}")
         out.append("")
         if sl.get("aviso"):
-            out += [f"Aviso: {_esc_md(sl['aviso'])}", ""]
-        out += [f"- {_esc_md(b)}" for b in sl["bullets"]]
+            out += [f"Aviso: {_esc_md_(sl['aviso'])}", ""]
+        out += [f"- {_esc_md_(b)}" for b in sl["bullets"]]
         out.append("")
     return "\n".join(out)
 
@@ -1330,14 +1337,16 @@ def _desescapar_md(t: str) -> str:
 
 
 def guion_desde_md(md: str) -> dict:
-    """Inversa de guion_doc_md: el documento editado vuelve a ser un guion (dict de Outline)."""
+    """Inversa de guion_doc_md (reconoce solo si es crudo): el documento editado vuelve a
+    ser un guion (dict de Outline)."""
+    _desescapar_md_ = (lambda t: t.strip()) if MARCA_CRUDO in md else _desescapar_md
     data = {v: "" for v in _META.values()}
     slides, cur = [], None
     for raw in md.splitlines():
         line = raw.strip()
         m = re.match(r"^#{2,3}\s*\**\s*(\d+)\\?\.\s*(.+?)\**$", line)
         if m:
-            cur = {"title": _desescapar_md(m.group(2)), "bullets": [], "kind": "bullets",
+            cur = {"title": _desescapar_md_(m.group(2)), "bullets": [], "kind": "bullets",
                    "sources": [], "section": "", "aviso": ""}
             slides.append(cur)
             continue
@@ -1346,17 +1355,17 @@ def guion_desde_md(md: str) -> dict:
             continue
         field = re.match(r"^\**(Título|Autores|Revista|Notación)\**:\s*(.*)$", line)
         if field and cur is None:
-            data[_META[field.group(1)]] = _desescapar_md(field.group(2))
+            data[_META[field.group(1)]] = _desescapar_md_(field.group(2))
             continue
         if cur is None:
             continue
         if re.match(r"^\**Secci[oó]n\**:", line):
             line, _, aviso = line.partition("Aviso:")        # por si el editor unió las líneas
             if aviso:
-                cur["aviso"] = _desescapar_md(aviso)
+                cur["aviso"] = _desescapar_md_(aviso)
             for part in re.split(r"\s*[·|]\s*", line):
                 k, _, v = part.partition(":")
-                k, v = k.strip("* ").lower(), _desescapar_md(v)
+                k, v = k.strip("* ").lower(), _desescapar_md_(v)
                 if k.startswith("secci"):
                     cur["section"] = "" if v == "-" else v
                 elif k == "tipo":
@@ -1364,9 +1373,9 @@ def guion_desde_md(md: str) -> dict:
                 elif k == "fuentes":
                     cur["sources"] = [x.strip("` ") for x in re.split(r"[,\s]+", v) if x.strip("` ")]
         elif re.match(r"^\**Aviso\**:", line):
-            cur["aviso"] = _desescapar_md(line.split(":", 1)[1])
+            cur["aviso"] = _desescapar_md_(line.split(":", 1)[1])
         elif re.match(r"^([-*+]|\d+[.)])\s+", line):
-            cur["bullets"].append(_desescapar_md(re.sub(r"^([-*+]|\d+[.)])\s+", "", line)))
+            cur["bullets"].append(_desescapar_md_(re.sub(r"^([-*+]|\d+[.)])\s+", "", line)))
     return {**data, "slides": slides}
 
 

@@ -226,8 +226,11 @@ while (code := driver_claude.run(cli)) == 3:
         if t["esquema"] == "Review":                  # por defecto se revisa Claude mismo
             assert "PARA QUIEN COORDINA" not in prompt and "como si la hubiera escrito otra persona" in prompt
         prompt = prompt.split("---\n\n", 1)[1].split("\n\n---\n")[0]
-        if t["tipo"] == "guion":
-            ans = (work / "guion.json").read_text()
+        if t["tipo"] == "guion":                      # la persona edita guion.md y aprueba
+            gmd = work / "guion.md"
+            assert bg.MARCA_CRUDO in gmd.read_text() and "$x$" in gmd.read_text()   # fórmulas $…$
+            gmd.write_text(gmd.read_text().replace("- Ganancia", "- Ganancia editada a mano", 1))
+            ans = "aprobado"
         elif t["tipo"] == "json":
             ans = fake_structured("claude", getattr(bg, t["esquema"]), prompt).model_dump_json()
         else:
@@ -239,6 +242,11 @@ assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revis
 # interrupt) y el driver debe reanudar bien, no declarar «Listo» sin hacer nada
 assert calls["lectura"] == 2
 assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
+assert "Ganancia editada a mano" in json.dumps(graph_c := driver_claude.bg.build_graph(
+    __import__("langgraph.checkpoint.sqlite", fromlist=["SqliteSaver"]).SqliteSaver(
+        __import__("sqlite3").connect(work / "estado.sqlite", check_same_thread=False))).get_state(
+    {"configurable": {"thread_id": "beamer"}}).values["outline"], ensure_ascii=False), \
+    "la edición de guion.md debía llegar al guion aprobado"
 # LLM_REVISOR=subagente: la revisión pide un solo subagente independiente para la ronda
 import os
 os.environ["LLM_REVISOR"] = "subagente"
@@ -312,6 +320,14 @@ for o_ in (dificil, {**res["outline"], "slides": [x for x in res["outline"]["sli
         for k in ("title", "bullets", "kind", "sources", "section", "aviso"):
             assert a.get(k, "") == b[k], (k, a.get(k), b[k])
     assert len(back["slides"]) == len(o_["slides"])
+    crudo = bg.guion_doc_md(o_, res["chunks"], crudo=True)       # archivo: LaTeX tal cual
+    assert "\\\\texttt" not in crudo and "`$" not in crudo
+    assert o_ is not dificil or "\\texttt{lsmear}: B\\&B" in crudo
+    back = bg.guion_desde_md(crudo)
+    assert all(back[k] == o_[k] for k in ("title", "authors", "venue", "notation")), back
+    for a, b in zip(o_["slides"], back["slides"]):
+        for k in ("title", "bullets", "kind", "sources", "section", "aviso"):
+            assert a.get(k, "") == b[k], ("crudo", k, a.get(k), b[k])
 
 # Figuras: se recortan del PDF (el pie «Fig. N» sí, la mención «Figure N shows» no) y una
 # diapo figure compila con \includegraphics{figuras/figN.png}
