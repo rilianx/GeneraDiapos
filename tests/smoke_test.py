@@ -1,6 +1,7 @@
 """Prueba sin API: simula el LLM para verificar el grafo, la compilación
 por diapositiva, los ciclos de refinado y la pausa de revisión."""
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -215,8 +216,18 @@ work = tmp / "claude"
 cli = argparse.Namespace(claude=str(work), source=str(tmp / "paper.tex"), out=str(tmp / "out_claude"),
                          base=str(bg.DEFAULT_BASE), estilo=str(bg.DEFAULT_STYLE), extractor="pymupdf",
                          review=True, guion=None, concurrency=2)
-rounds, comunes = 0, 0
-while (code := driver_claude.run(cli)) == 3:
+rounds, comunes, editado_mal = 0, 0, None
+import contextlib, io
+while True:
+    salida = io.StringIO()
+    with contextlib.redirect_stdout(salida):
+        code = driver_claude.run(cli)
+    print(salida.getvalue(), end="")
+    if "no valida" in salida.getvalue():          # guion.md inválido: el mensaje es para la persona
+        assert "Es su archivo" in salida.getvalue() and "RESPUESTA INVÁLIDA" not in salida.getvalue()
+        guion_invalido_visto = True
+    if code != 3:
+        break
     rounds += 1
     assert rounds < 20, "el modo claude no terminó"
     for t in json.loads((work / "pendientes.json").read_text()):
@@ -229,7 +240,11 @@ while (code := driver_claude.run(cli)) == 3:
         if t["tipo"] == "guion":                      # la persona edita guion.md y aprueba
             gmd = work / "guion.md"
             assert bg.MARCA_CRUDO in gmd.read_text() and "$x$" in gmd.read_text()   # fórmulas $…$
-            gmd.write_text(gmd.read_text().replace("- Ganancia", "- Ganancia editada a mano", 1))
+            if not editado_mal:                       # 1º: la persona se equivoca de fuente
+                editado_mal = gmd.read_text()
+                gmd.write_text(re.sub(r"Fuentes: sec3", "Fuentes: sec99", editado_mal, count=1))
+            else:                                     # 2º: lo corrige
+                gmd.write_text(editado_mal.replace("- Ganancia", "- Ganancia editada a mano", 1))
             ans = "aprobado"
         elif t["tipo"] == "json":
             ans = fake_structured("claude", getattr(bg, t["esquema"]), prompt).model_dump_json()
@@ -242,6 +257,7 @@ assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revis
 # interrupt) y el driver debe reanudar bien, no declarar «Listo» sin hacer nada
 assert calls["lectura"] == 2
 assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
+assert guion_invalido_visto, "un guion.md mal editado debía rechazarse con un mensaje para la persona"
 inf = (tmp / "out_claude" / "informe.md").read_text()      # tiempos por ronda en el informe
 assert "## Tiempos (modo Claude)" in inf and "revisión humana del guion" in inf and "1 lectura" in inf
 assert "Ganancia editada a mano" in json.dumps(graph_c := driver_claude.bg.build_graph(

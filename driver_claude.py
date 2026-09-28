@@ -197,9 +197,11 @@ def leer_respuestas(pend: list[dict], values: dict) -> tuple[dict, list[str], li
         if t["tipo"] == "texto":
             ans[t["id"]] = raw
             continue
+        editado = None
         try:
             if t["tipo"] == "guion" and raw.strip().lower().startswith("aprobado"):
-                raw = (f.parent.parent / "guion.md").read_text()     # el archivo que editó el usuario
+                editado = (f.parent.parent / "guion.md").resolve()   # el archivo que editó el usuario
+                raw = editado.read_text()
             if f.suffix == ".md":                        # guion editado como documento
                 data = bg.guion_desde_md(raw)
             else:
@@ -215,7 +217,13 @@ def leer_respuestas(pend: list[dict], values: dict) -> tuple[dict, list[str], li
                 getattr(bg, t["esquema"]).model_validate(bg.restaurar_escapes(data))
             ans[t["id"]] = data
         except Exception as e:                        # la respuesta vuelve a pedirse
-            errores.append(f"{f}: {e}")
+            if editado:                               # el error está en el archivo del usuario
+                errores.append(f"GUION: el guion que editó el usuario ({editado}) no valida: {e}\n"
+                               "Es su archivo: muéstrale estos errores en pocas líneas y espera a que "
+                               "lo corrija (corrígelo tú solo si te lo pide). Luego vuelve a ejecutar "
+                               "el comando; la respuesta «aprobado» ya está escrita.")
+            else:
+                errores.append(f"{f}: {e}")
     return ans, faltan, errores
 
 
@@ -317,7 +325,7 @@ def run(args) -> int:
         pend = json.loads((d / PENDIENTES).read_text())
         ans, faltan, errores = leer_respuestas(pend, snap.values)
         for e in errores:
-            print(f"RESPUESTA INVÁLIDA (corrígela): {e}")
+            print(e.removeprefix("GUION: ") if e.startswith("GUION: ") else f"RESPUESTA INVÁLIDA (corrígela): {e}")
         if faltan or errores:
             informar([t for t in pend if t["id"] not in ans])
             registrar_tiempo(d, inicio, [t for t in pend if t["id"] in ans], [], len(errores) + len(faltan))
