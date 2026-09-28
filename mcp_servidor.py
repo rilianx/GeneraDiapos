@@ -66,8 +66,10 @@ def validar_frame(frame: str, tipo: str, fuentes: list[str] | None = None, traba
     if not errores:
         tex, off = bg.standalone(ctx["head"], frame_tex)
         errores, carpeta = bg.compile_tex(tex, offset=off, figuras=figdir)
-    estilo = (bg.kind_check(frame, tipo, fuentes) + bg.style_check(bg.sin_diagramas(frame), ctx["limits"])
-              + diag_avisos) if tipo in bg.KINDS else [f"tipo desconocido: {tipo}"]
+    visible = bg.sin_nota(frame)                 # el \note{} no cuenta para los límites
+    estilo = (bg.kind_check(visible, tipo, fuentes) + bg.style_check(bg.sin_diagramas(visible), ctx["limits"])
+              + diag_avisos + (bg.nota_check(frame) if "\\note" in frame else [])) \
+        if tipo in bg.KINDS else [f"tipo desconocido: {tipo}"]
     cifras = bg.soft_checks(frame, ctx["texto"]) if ctx["texto"] else []
     informe = {"compila": not errores, "errores": errores, "estilo": estilo,
                "avisos_cifras": cifras,

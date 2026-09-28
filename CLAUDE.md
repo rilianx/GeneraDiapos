@@ -47,15 +47,15 @@ para el flujo completo y las decisiones de diseño.
 - Registro de errores: `registrar_errores` (desde `compile_slide`), `categoria_error`, `errores_previos`
   (aviso en `SLIDE_PROMPT`); archivo `ERRORES_LOG` (`BEAMER_ERRORES`)
 - Estilo: `load_style`, `guia_guion` / `guia_notas` (reglas solo del guion / de las notas), `describe_limits`, `style_check`
-- Notas del expositor (`--notas`): nodo `notas_expositor` (entre `compile_full` y `write_outputs`,
-  `NOTAS_PROMPT`, `validar_notas`); salen en `notas.md`, `\note{}` (`tex_con_notas` / `separar_nota`)
-  y en el panel de notas del .pptx
+- Notas del expositor (`--notas`): cada diapo trae su `\note{}` (`regla_notas` en `SLIDE_PROMPT`,
+  `nota_check`); `sin_nota` la quita antes de los chequeos de estilo; `separar_nota` / `notas_de`
+  la sacan del frame final para `notas.md` y el panel de notas del .pptx
 - Prompts: `OUTLINE_PROMPT`, `SLIDE_PROMPT`, `REFINE_SLIDE_PROMPT`, `REFINE_GLOBAL_PROMPT`
 - Base: `base_packages`, `base_files`, `base_macros`, `fill_base`, `split_base`, `standalone`
 - Guion: `indice_tablas`, `cargar_guion` (guion revisado desde JSON), `guion_md` (vista para el PR),
   `guion_doc_md` / `guion_desde_md` (guion como documento editable, ida y vuelta en código)
 - Nodos principales: `ingest`, `outline`, `review_outline`, `fan_out`, `assemble`,
-  `compile_full`, `refine_global`, `notas_expositor`, `write_outputs`
+  `compile_full`, `refine_global`, `write_outputs`
 - Subgrafo: `write_slide`, `compile_slide`, `route_slide`, `review_slide`, `route_review`,
   `refine_slide`, `refine_facts`, `finish_slide`
 

@@ -41,16 +41,6 @@ def fake_structured(model, schema, prompt, effort=None):
         return bg.Lectura(tablas=[], algoritmos=[], secciones=[], ecuaciones=[
             bg.ElementoLeido(id="eq1", pagina=1, titulo="Lagrangiano",
                              latex=r"L(x,\lambda)=f(x)+\sum_j \lambda_j g_j(x)")])
-    if schema is bg.Notas:                             # 1er intento: falta una y otra trae LaTeX
-        calls["notas_prompt"] = prompt
-        calls["notas"] = calls.get("notas", 0) + 1
-        if calls["notas"] == 1:
-            return bg.Notas(notas=[bg.NotaDiapo(diapo=0, texto="Hoy presentamos $x$."),
-                                   bg.NotaDiapo(diapo=2, texto="El método.")])
-        return bg.Notas(notas=[
-            bg.NotaDiapo(diapo=0, texto="Hoy presentamos un método de optimización."),
-            bg.NotaDiapo(diapo=2, texto="El lagrangiano junta objetivo y restricciones: 100% de_ellas {x}."),
-            bg.NotaDiapo(diapo=3, texto="Mejora 1.43 veces.\n\nEn 777 casos, lo que no dice el paper.")])
     if schema is bg.Review:                            # revisor: marca la cifra 99.9, que no está en la fuente
         calls["review"] += 1
         bad = "99.9" in prompt.split("CONTEXTO:")[0]
@@ -67,18 +57,22 @@ def fake_structured(model, schema, prompt, effort=None):
         ])
 
 
+NOTA_MET = r"\note{El lagrangiano junta objetivo y restricciones: 100\% de\_ellas \{x\}.}"
+NOTA_RES = "\\note{Mejora 1.43 veces. " + "Lo explicamos con calma " * 12 + "\n\nEn 777 casos, lo que no dice el paper.}"
+
+
 def fake_text(model, prompt):
-    if prompt.startswith("Esta diapositiva"):          # refine_slide
+    if prompt.startswith("Esta diapositiva"):          # refine_slide: conserva la nota si la había
         calls["refine"] += 1
         if "Método" in prompt:
-            return r"\begin{frame}{Método}$x\in\R^n$ y \[L(x,\lambda)\]\end{frame}"
-        return r"\begin{frame}{Resultados}Ganancia 1.43 en 76 instancias.\end{frame}"
+            return r"\begin{frame}{Método}$x\in\R^n$ y \[L(x,\lambda)\]" + NOTA_MET + r"\end{frame}"
+        return r"\begin{frame}{Resultados}Ganancia 1.43 en 76 instancias." + NOTA_RES + r"\end{frame}"
     title = "Método" if "Título: Método" in prompt else "Resultados"
     calls["write"][title] = prompt
-    if title == "Método":                              # error: macro inexistente
+    if title == "Método":                              # error: macro inexistente; y sin \note
         return r"\begin{frame}{Método}$\noexiste{x}$\end{frame}"
     wide = r"\[" + "+".join(["x_{%d}" % i for i in range(80)]) + r"\]"
-    return r"\begin{frame}{Resultados}Ganancia 1.43, 99.9\%" + wide + r"\end{frame}"
+    return r"\begin{frame}{Resultados}Ganancia 1.43, 99.9\%" + wide + NOTA_RES + r"\end{frame}"
 
 
 # Escapes JSON que el modelo no dobló (\texttt → tab + "exttt") se restauran
@@ -147,27 +141,29 @@ apx = bg.tex_a_pptx(out / "presentacion.tex")
 with zipfile.ZipFile(apx) as z:
     assert len([n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)]) == n_frames
     notas_apx = "".join(z.read(n).decode() for n in z.namelist() if n.startswith("ppt/notesSlides/notesSlide"))
-# Notas del expositor: se reintenta si falta una o trae LaTeX; salen en notas.md, \note{} y el .pptx
-assert calls["notas"] == 2 and "falta la nota de la diapositiva [3]" in calls["notas_prompt"]
-assert "trae LaTeX ($x$)" in calls["notas_prompt"] and "[1]" not in calls["notas_prompt"]   # sin agenda
-assert "Portada: Demo (A. Autor; Revista)" in calls["notas_prompt"] and "Unas 80 a 130" in calls["notas_prompt"]
-assert "estudiantes de pregrado" in calls["notas_prompt"]
+# Notas del expositor: cada diapo trae su \note{} (regla en SLIDE_PROMPT, con la guía de estilo);
+# la nota no cuenta para los límites, sale en notas.md, en el .tex y en el panel del .pptx
+assert "Notas del expositor: al final" in p_met and "Unas 80 a 130" in p_met
+assert NOTA_MET in tex and "Lo explicamos con calma" in tex
 nmd = (out / "notas.md").read_text()
-assert "## 0. Portada" in nmd and "## 3. Resultados" in nmd and "1.43 veces" in nmd
-assert r"\note{El lagrangiano junta objetivo y restricciones: 100\% de\_ellas \{x\}.}" in tex
-errs_n, _ = bg.compile_tex(tex, passes=2, ignore_vbox=True, figuras=res.get("figuras_dir"))     # con las notas sigue compilando
+assert "## 2. Método" in nmd and "## 3. Resultados" in nmd and "100% de_ellas {x}" in nmd
+errs_n, _ = bg.compile_tex(tex, passes=2, ignore_vbox=True, figuras=res.get("figuras_dir"))
 assert not errs_n, errs_n
 inf = (out / "informe.md").read_text()
-assert "Notas del expositor: `notas.md` (3 diapositivas" in inf and "Nota de la diapo 3: Cifra 777" in inf
+assert "Notas del expositor: `notas.md` (2 diapositivas" in inf and "Nota: Cifra 777" in inf
+assert "palabras" not in inf.split("| 3 |")[1].split("\n")[0]       # la nota larga no cuenta
 with zipfile.ZipFile(pptx_f) as z:
     notas_px = "".join(z.read(n).decode() for n in z.namelist() if n.startswith("ppt/notesSlides/notesSlide"))
-for t in ("Hoy presentamos un método", "100% de_ellas {x}", "En 777 casos"):
+for t in ("El lagrangiano junta", "100% de_ellas {x}", "En 777 casos"):
     assert t in notas_px and t in notas_apx, t
+assert "note" not in xml                                               # no queda en la diapo
+# nota_check: falta, trae LaTeX, o bien
+fr = lambda n: r"\begin{frame}{T}a" + n + r"\end{frame}"
+assert "falta el \\note" in bg.nota_check(fr(""))[0]
+assert "trae LaTeX" in bg.nota_check(fr(r"\note{usa $x$}"))[0] and "trae LaTeX" in bg.nota_check(fr(r"\note{\alert{a}}"))[0]
+assert bg.nota_check(fr(r"\note{5\% y a\_b}")) == []
 assert bg.separar_nota(r"\begin{frame}{T}a\note{b \{c\} 5\%}\end{frame}") == \
-    ("\\begin{frame}{T}a\n\\end{frame}", "b {c} 5%")
-assert bg.tex_con_notas("x\\end{frame}", [0, 1], {"0": "n"}) == "x\\end{frame}"   # no calza: sin notas
-import driver_claude
-assert driver_claude.etiqueta({"esquema": "Notas", "prompt": ""}) == "notas-expositor"
+    ("\\begin{frame}{T}a\\end{frame}", "b {c} 5%")
 # Registro de errores de los validadores: \noexiste (compilación) queda anotado y en el informe
 cats = [r["categoria"] for r in bg.leer_errores()]
 assert "Error: Undefined control sequence (\\noexiste)" in cats, cats
