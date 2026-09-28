@@ -12,7 +12,11 @@ Usa `.venv/bin/python` si existe (dependencias en un entorno virtual); si no, `p
 python beamer_graph.py papers/<nombre>.pdf --claude trabajo/<nombre> --out presentaciones/<nombre> --review
 ```
 
-Si piden PowerPoint (.pptx), agrega `--pptx` a ese primer comando.
+En ese primer comando, según lo que pida el usuario:
+- PowerPoint (.pptx): `--pptx`.
+- Otros archivos (otro paper, notas): `--extra ARCHIVO`, uno por archivo.
+- Indicaciones para la presentación (público, duración, énfasis, idioma, secciones):
+  `--instrucciones "…"` con sus palabras, o `--instrucciones archivo` si las dio en un archivo.
 
 Luego, hasta que diga «Listo»:
 1. Lee cada archivo de `trabajo/<nombre>/tareas/` (y una vez `trabajo/<nombre>/comun.md`,

@@ -20,6 +20,7 @@ límites medibles, que se verifican en código y disparan refinados.
 from __future__ import annotations
 
 import argparse
+import itertools
 import os
 import json
 import operator
@@ -85,7 +86,7 @@ STYLE_DEFAULTS = {
     "prohibir_vspace_negativo": True, "tamanos_permitidos": [r"\small"],
     "max_fraccion_vinetas": 0.4, "max_bloques": 2, "prohibir_alert_en_alertblock": True,
     # [estructura] de estilo.toml
-    "secciones": ["Introducción", "Trabajo relacionado", "Propuesta", "Experimentos", "Conclusiones"],
+    "secciones": [],                 # vacío: las decide el guion; una lista las fija (y su orden)
     "agenda": True,
 }
 SLIDES_MARK = "%%SLIDES%%"
@@ -288,6 +289,8 @@ class State(TypedDict, total=False):
     pdf_path: str
     inicio: float           # cuándo empezó la ejecución (para el resumen de errores del informe)
     pptx: str               # plantilla .pptx: si está, también se exporta presentacion.pptx
+    extras: list[str]       # fuentes adicionales (.pdf, .tex, .md, .txt): fragmentos x1…, x2…
+    instrucciones: str      # instrucciones de quien presenta (texto libre)
 
 
 class SlideState(TypedDict, total=False):
@@ -306,6 +309,7 @@ class SlideState(TypedDict, total=False):
     tables: str             # índice de todas las tablas (título y encabezados)
     plan: str               # títulos del guion completo
     previos: str            # errores frecuentes de ejecuciones anteriores (aviso en el prompt)
+    instrucciones: str      # instrucciones de quien presenta (bloque ya formateado)
     paper: str
     style_errors: list[str]
     fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
@@ -915,8 +919,9 @@ def style_check(frame: str, lim: dict) -> list[str]:
 # Prompts
 # ----------------------------------------------------------------------------
 OUTLINE_PROMPT = """Diseñas una presentación académica en Beamer, en español, de {nmin} a {nmax} \
-diapositivas, sobre el paper cuyos fragmentos aparecen abajo.
+diapositivas, sobre el paper cuyos fragmentos aparecen abajo (y las fuentes adicionales, si hay).
 
+{instrucciones}
 Devuelve:
 - title, authors, venue: en LaTeX válido (escapa &, %, _).
 - notation: glosario breve de los símbolos que TODAS las diapositivas deben usar igual.
@@ -925,8 +930,7 @@ Devuelve:
 Cada una debe listar en sources \
 los IDs exactos de los fragmentos que necesita (incluidos eq*, tab*, alg* si usa esa ecuación, \
 tabla o algoritmo). Si un tema no cabe en los límites, divídelo en dos diapositivas.
-- section: la sección de cada diapo, una de: {secciones}. Respeta ese orden y dale a cada \
-sección al menos una diapo si el paper tiene contenido para ella.
+- section: la sección de cada diapo. {regla_secciones}
 - aviso: si NO estás seguro de qué tabla o fragmento corresponde a una diapo (p. ej. dos tablas \
 parecidas, o una tabla cuyo título no dice qué métodos compara), escríbelo aquí y nombra las \
 candidatas ("¿tab1 o tab2? tab2 parece de variantes"). Una persona revisará estos avisos. Déjalo \
@@ -980,7 +984,7 @@ cubren las demás diapos del guion completo:
 
 {plan}
 
-{previos}Título: {title}
+{instrucciones}{previos}Título: {title}
 Contenido a cubrir (ideas y datos, no viñetas literales):
 {bullets}
 {aviso}
@@ -1185,6 +1189,22 @@ def ingest(state: State) -> dict:
         with pymupdf.open(path) as doc:          # capa de texto plana: la extracción en markdown
             plano = "\n".join(pg.get_text() for pg in doc)   # trunca celdas de tablas rotadas
         out["texto"] = text + "\n\n" + plano     # (se usa para validar la lectura y las cifras)
+    for n, extra in enumerate(state.get("extras") or [], 1):
+        et, efmt = extract_text(Path(extra), state.get("extractor", "pymupdf"))
+        chunks.update(fragmentos_extra(et, efmt, n, Path(extra).name))
+        out["texto"] += "\n\n" + et
+    return out
+
+
+def fragmentos_extra(texto: str, fmt: str, n: int, nombre: str) -> dict[str, str]:
+    """Fragmentos de una fuente adicional con ids x{n}sec1, x{n}tab1…, marcados con su archivo.
+    Van siempre como texto (en modo claude no se leen como imagen) y no aportan figuras."""
+    base = chunk_document(texto, fmt)
+    ren = {c: f"x{n}{c}" for c in base}
+    out = {}
+    for c, t in base.items():
+        t = re.sub(r"\[(sec|tab|alg|eq)(\d+)\]", lambda m: f"[x{n}{m.group(1)}{m.group(2)}]", t)
+        out[ren[c]] = f"[Fuente adicional: {nombre}] {t}"
     return out
 
 
@@ -1248,7 +1268,7 @@ def lectura(state: State) -> dict:
         feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs) + "\n"
     else:
         raise RuntimeError(f"Lectura inválida tras {MAX_OUTLINE_ATTEMPTS} intentos: {errs}")
-    out = {c: t for c, t in chunks.items() if c.startswith(("sec", "fig"))}
+    out = {c: t for c, t in chunks.items() if c.startswith(("sec", "fig", "x"))}
     pags = {sc.id: sc.paginas for sc in le.secciones}
     for c in out:
         if c in pags:
@@ -1302,12 +1322,47 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
         if s.kind not in FIXED_KINDS and not s.sources:
             errs.append(f"Diapositiva {i} ('{s.title}') no tiene sources")
     secs = lim.get("secciones") or []
+    content = [(i, s) for i, s in enumerate(o.slides) if s.kind not in FIXED_KINDS]
     if secs:
-        bad = [f"{i} ('{s.title}'): '{s.section}'" for i, s in enumerate(o.slides)
-               if s.kind not in FIXED_KINDS and s.section not in secs]
+        bad = [f"{i} ('{s.title}'): '{s.section}'" for i, s in content if s.section not in secs]
         if bad:
             errs.append(f"Diapositivas sin sección válida {bad}; usa una de: {', '.join(secs)}")
+    else:                                   # secciones libres: las decide el guion
+        bad = [f"{i} ('{s.title}')" for i, s in content if not s.section.strip()]
+        if bad:
+            errs.append(f"Diapositivas sin sección válida {bad}: ponle una sección a cada diapo")
+        orden = [s.section for _, s in content if s.section.strip()]
+        vistas = list(dict.fromkeys(orden))
+        if len(vistas) > MAX_SECCIONES:
+            errs.append(f"{len(vistas)} secciones; máximo {MAX_SECCIONES}: agrupa más")
+        tramos = [k for k, _ in itertools.groupby(orden)]         # secciones seguidas, en orden
+        partidas = [x for x in vistas if tramos.count(x) > 1]
+        if partidas:
+            errs.append(f"Las secciones {partidas} aparecen partidas: cada sección debe agrupar diapos seguidas")
     return errs
+
+
+MAX_SECCIONES = 7
+
+
+def regla_secciones(lim: dict) -> str:
+    secs = lim.get("secciones") or []
+    if secs:
+        return (f"Una de: {', '.join(secs)}. Respeta ese orden y dale a cada sección al menos una "
+                "diapo si el paper tiene contenido para ella.")
+    return (f"Elige tú las secciones según el paper y las instrucciones: de 3 a {MAX_SECCIONES - 2}, con "
+            "nombres breves (p. ej. Introducción, Propuesta, Experimentos, Conclusiones, u otros que le "
+            "calcen mejor al paper). Cada sección agrupa diapos seguidas: no vuelvas a una anterior.")
+
+
+def bloque_instrucciones(state: dict) -> str:
+    """Instrucciones de quien presenta (público, duración, énfasis, idioma, secciones...)."""
+    t = (state.get("instrucciones") or "").strip()
+    if not t:
+        return ""
+    return ("INSTRUCCIONES DE QUIEN PRESENTA (mandan sobre la guía de estilo en contenido, público, "
+            "énfasis, idioma y secciones; no sobre el formato LaTeX ni los límites que se verifican):\n"
+            + t + "\n\n")
 
 
 def variedad_outline(o: Outline, lim: dict) -> list[str]:
@@ -1332,7 +1387,7 @@ def outline(state: State) -> dict:
     for attempt in range(1, MAX_OUTLINE_ATTEMPTS + 1):
         o = call_structured(MODEL_OUTLINE, Outline, effort=REASONING_OUTLINE, prompt=OUTLINE_PROMPT.format(
             kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
-            secciones=", ".join(lim.get("secciones") or ["(libre)"]),
+            regla_secciones=regla_secciones(lim), instrucciones=bloque_instrucciones(state),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide="\n".join(filter(None, [guide, guia_guion(state.get("style_path"))])) or "-",
             limits=describe_limits(lim, guion=True)))
@@ -1413,7 +1468,8 @@ def guion_doc_md(outline: dict, chunks: dict, crudo: bool = False) -> str:
         out += [f"{k}: {_esc_md_(outline[v])}", ""]
     out += ["", "Edita libremente: textos, viñetas, y borra o mueve secciones «## N. …». Mantén en cada "
             "diapo la línea «Sección: … · Tipo: … · Fuentes: …». Secciones: "
-            + ", ".join(lim["secciones"]) + ". Tipos: " + ", ".join(KINDS) + ". Fuentes: ids de la "
+            + (", ".join(lim["secciones"]) if lim["secciones"] else "las que quieras (una por diapo; "
+               "cada sección agrupa diapos seguidas)") + ". Tipos: " + ", ".join(KINDS) + ". Fuentes: ids de la "
             "lista de abajo. La portada y la agenda se agregan solas."
             + (" Escribe el LaTeX tal cual; las fórmulas, entre $…$." if crudo else ""), ""]
     avisos = avisos_guion(outline, chunks)
@@ -1552,6 +1608,7 @@ def fan_out(state: State) -> list[Send]:
         "figuras_dir": state.get("figuras_dir", ""),
         "tables": indice_tablas(chunks), "plan": plan_guion(o["slides"]),
         "previos": previos, "paper": state.get("source_path", ""),
+        "instrucciones": bloque_instrucciones(state),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
         "warnings": [],
     }) for i, s in enumerate(o["slides"])]
@@ -1695,6 +1752,7 @@ def write_slide(s: SlideState) -> dict:
         bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"],
         section=spec.get("section") or "-", plan=s.get("plan") or "-", num=s["idx"],
         previos=(s["previos"] + "\n\n") if s.get("previos") else "",
+        instrucciones=s.get("instrucciones", ""),
         aviso=(f"Aviso del guion (tenlo en cuenta al elegir las cifras): {spec['aviso']}\n"
                if spec.get("aviso") else "")))
     return {"frame": frame}
@@ -1825,6 +1883,59 @@ def build_graph(checkpointer=None):
 # ----------------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------------
+def leer_instrucciones(valor: str | None) -> str:
+    """--instrucciones acepta el texto o la ruta de un archivo con él."""
+    if not valor:
+        return ""
+    p = Path(valor)
+    return p.read_text(errors="replace").strip() if len(valor) < 300 and p.is_file() else valor.strip()
+
+
+def opciones_fuentes(args) -> dict:
+    out = {}
+    extras = getattr(args, "extra", None) or []
+    for e in extras:
+        if not Path(e).is_file():
+            raise SystemExit(f"--extra: no existe {e}")
+    if extras:
+        out["extras"] = [str(Path(e)) for e in extras]
+    instr = leer_instrucciones(getattr(args, "instrucciones", None))
+    if instr:
+        out["instrucciones"] = instr
+    return out
+
+
+def tex_a_pptx(tex: Path, plantilla: str | None = None) -> Path:
+    """--a-pptx: una presentación Beamer ya compilada (o editada a mano) → .pptx junto a ella.
+    Usa figuras/ y el .pdf del mismo nombre si están (el pseudocódigo se recorta del PDF)."""
+    import pptx_export
+    src = tex.read_text()
+    head, _, body = src.partition("\\begin{document}")
+
+    def campo(cmd: str) -> str:
+        m = re.search(r"\\" + cmd + r"\{((?:[^{}]|\{[^{}]*\})*)\}", head)
+        return m.group(1).strip() if m and "<<" not in m.group(1) else ""
+    frames, slides, sec = [], [], ""
+    for m in re.finditer(r"\\section\*?\{([^}]*)\}|\\begin\{frame\}.*?\\end\{frame\}", body, re.S):
+        if m.group(1) is not None:
+            sec = m.group(1)
+            continue
+        fr = m.group(0)
+        kind = "title" if "\\titlepage" in fr else "agenda" if "\\tableofcontents" in fr else "bullets"
+        frames.append((kind, fr))
+        slides.append({"kind": kind, "section": "" if kind in FIXED_KINDS else sec})
+    if not frames:
+        raise SystemExit(f"--a-pptx: {tex} no tiene frames")
+    outline = {"title": campo("title"), "authors": campo("author"), "venue": campo("subtitle"),
+               "slides": slides}
+    figuras = tex.parent / "figuras"
+    return pptx_export.exportar(
+        frames, outline, tex.with_suffix(".pptx"),
+        plantilla=Path(plantilla) if plantilla else None,
+        figuras=figuras if figuras.is_dir() else None,
+        pdf_beamer=tex.with_suffix(".pdf"), macros=base_definiciones(head))
+
+
 def opciones_pptx(args) -> dict:
     if not (getattr(args, "pptx", False) or getattr(args, "plantilla", None)):
         return {}
@@ -1851,6 +1962,13 @@ def main() -> None:
                     help="exporta también presentacion.pptx (fórmulas editables) sobre la plantilla")
     ap.add_argument("--plantilla", default=None, metavar="PPTX",
                     help="plantilla de PowerPoint para --pptx (por defecto plantilla.pptx)")
+    ap.add_argument("--extra", action="append", default=[], metavar="ARCHIVO",
+                    help="fuente adicional (.pdf, .tex, .md, .txt), p. ej. otro paper o notas; repetible")
+    ap.add_argument("--instrucciones", metavar="TEXTO|ARCHIVO",
+                    help="instrucciones para armar la presentación (público, duración, énfasis, idioma, "
+                         "secciones...), como texto o archivo")
+    ap.add_argument("--a-pptx", metavar="TEX",
+                    help="convierte una presentacion.tex ya generada (o editada) a .pptx y termina")
     ap.add_argument("--resumen-errores", nargs="?", const="", metavar="JSONL",
                     help="resume el registro de errores de los validadores (por defecto "
                          "errores_validacion.jsonl) y termina")
@@ -1858,6 +1976,10 @@ def main() -> None:
     if args.resumen_errores is not None:
         print(resumen_errores(args.resumen_errores or None))
         return
+    if args.a_pptx:
+        print(f"PowerPoint: {tex_a_pptx(Path(args.a_pptx), args.plantilla)}")
+        return
+    args.instrucciones = leer_instrucciones(args.instrucciones)
     if args.claude:
         from driver_claude import run
         try:
@@ -1893,7 +2015,7 @@ def main() -> None:
     result = graph.invoke({"source_path": args.source, "base_path": args.base, "style_path": args.estilo,
                            "out_dir": args.out, **({"outline_path": args.guion} if args.guion else {}),
                            "extractor": args.extractor, "human_review": args.review,
-                           **opciones_pptx(args)}, config)
+                           **opciones_pptx(args), **opciones_fuentes(args)}, config)
 
     while "__interrupt__" in result:
         path = Path(args.out) / "outline_borrador.json"

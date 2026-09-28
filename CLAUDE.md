@@ -36,6 +36,9 @@ para el flujo completo y las decisiones de diseño.
 - PowerPoint (`pptx_export.py`, `--pptx`): se deriva de los frames finales en `write_outputs`
   (`exportar_pptx`); Beamer sigue siendo la fuente de verdad. pandoc solo traduce el texto y las
   fórmulas (OMML en `mc:AlternateContent`, con fallback de imagen compilada con LaTeX).
+- Fuentes y pedido: `fragmentos_extra` (`--extra`, ids `x{n}…`), `bloque_instrucciones` (`--instrucciones`,
+  en `OUTLINE_PROMPT` y `SLIDE_PROMPT`), `regla_secciones` (secciones libres o las de `estilo.toml`),
+  `tex_a_pptx` (`--a-pptx`)
 - Registro de errores: `registrar_errores` (desde `compile_slide`), `categoria_error`, `errores_previos`
   (aviso en `SLIDE_PROMPT`); archivo `ERRORES_LOG` (`BEAMER_ERRORES`)
 - Estilo: `load_style`, `guia_guion` (reglas solo del guion), `describe_limits`, `style_check`

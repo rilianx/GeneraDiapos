@@ -30,6 +30,8 @@ calls = {"write": {}, "refine": 0, "review": 0}
 
 
 def fake_structured(model, schema, prompt, effort=None):
+    if schema is bg.Outline:
+        calls["outline_prompt"] = prompt
     if schema is bg.Lectura:                           # modo claude: inventario de lo leído
         calls["lectura"] = calls.get("lectura", 0) + 1
         if calls["lectura"] == 1:                      # 1er intento: una tabla que no existe
@@ -84,8 +86,11 @@ tmp = Path(tempfile.mkdtemp())
 out = tmp / "out"
 graph = bg.build_graph()
 cfg = {"configurable": {"thread_id": "t"}, "max_concurrency": 2}
+(tmp / "notas.txt").write_text("El autor quiere destacar que lsmear no requiere modificar el contractor.")
 res = graph.invoke({"source_path": str(tmp / "paper.tex"), "out_dir": str(out),
-                    "human_review": True, "pptx": str(Path(bg.__file__).with_name("plantilla.pptx"))}, cfg)
+                    "human_review": True, "pptx": str(Path(bg.__file__).with_name("plantilla.pptx")),
+                    "extras": [str(tmp / "notas.txt")],
+                    "instrucciones": "Público: estudiantes de pregrado; 10 minutos."}, cfg)
 assert "__interrupt__" in res, "debía pausar para revisión"
 edited = res["__interrupt__"][0].value["outline"]
 assert [s["kind"] for s in edited["slides"]][:2] == ["title", "agenda"]   # portada y agenda
@@ -98,8 +103,8 @@ assert "esta es la diapo 2 (sección: Propuesta)" in p_met and "  2. Método" in
 plan = lambda p: p.split("guion completo:\n\n")[1].split("\n\nTítulo:")[0]
 assert plan(p_met) == plan(p_res) and "[Experimentos]" in plan(p_met) and "Portada" not in plan(p_met)
 # lo que es solo del guion (reparto entre diapos, % de viñetas) no se repite en cada diapo
-assert "Dentro de las secciones" not in p_met and "solo con viñetas" not in p_met
-assert "Dentro de las secciones" in bg.guia_guion(None)
+assert "Un recorrido típico" not in p_met and "solo con viñetas" not in p_met
+assert "Un recorrido típico" in bg.guia_guion(None)
 assert "solo con viñetas" in bg.describe_limits(bg.STYLE_DEFAULTS, guion=True)
 assert "Aviso del guion" in p_res and "sale del texto" in p_res and "Aviso del guion" not in p_met
 
@@ -111,6 +116,11 @@ assert not res["log_errors"]
 tex = (out / "presentacion.tex").read_text()
 assert "\\tableofcontents" in tex and tex.index("\\section{Propuesta}") < tex.index("\\section{Experimentos}")
 assert calls["review"] > 0, "el revisor debía ejecutarse en las diapos que compilan"
+# Fuentes adicionales e instrucciones: llegan al guion y a cada diapo
+assert "x1sec1" in res["chunks"] and "[Fuente adicional: notas.txt]" in res["chunks"]["x1sec1"]
+assert "no requiere modificar el contractor" in calls["outline_prompt"]
+assert "estudiantes de pregrado" in calls["outline_prompt"] and "estudiantes de pregrado" in calls["write"]["Método"]
+assert "Elige tú las secciones" in calls["outline_prompt"]       # secciones libres por defecto
 # PowerPoint: misma cantidad de diapos, la ecuación como OMML editable y un fallback con imagen
 import zipfile
 pptx_f = out / "presentacion.pptx"
@@ -122,6 +132,10 @@ n_frames = len(res["outline"]["slides"])
 assert len(diapos) == n_frames, (len(diapos), n_frames)
 assert "<a14:m>" in xml and "oMath" in xml and "mc:Fallback" in xml and "<p:pic>" in xml
 assert "Método" in xml and "PowerPoint: `presentacion.pptx`" in (out / "informe.md").read_text()
+# --a-pptx: la presentación ya generada (o editada a mano) pasa a PowerPoint sin el pipeline
+apx = bg.tex_a_pptx(out / "presentacion.tex")
+with zipfile.ZipFile(apx) as z:
+    assert len([n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)]) == n_frames
 # Registro de errores de los validadores: \noexiste (compilación) queda anotado y en el informe
 cats = [r["categoria"] for r in bg.leer_errores()]
 assert "Error: Undefined control sequence (\\noexiste)" in cats, cats
@@ -154,6 +168,18 @@ o2 = bg.asegurar_portada(bg.Outline(title="Demo", authors="", venue="", notation
     bg.STYLE_DEFAULTS)
 assert [s.kind for s in o2.slides] == ["title", "agenda", "block", "block"]
 assert any("sin sección válida" in e for e in bg.validate_outline(o2, chunks))
+
+# Secciones libres: toda diapo con sección y cada sección con diapos seguidas; fijas: las de estilo.toml
+libre = dict(bg.STYLE_DEFAULTS)
+sec = lambda n: bg.SlideSpec(title="T", bullets=["x"], kind="block", sources=["sec1"], section=n)
+o3 = bg.asegurar_portada(bg.Outline(title="", authors="", venue="", notation="",
+                                    slides=[sec("Motivación"), sec("Método"), sec("Motivación")]), libre)
+assert any("partidas" in e for e in bg.validate_outline(o3, chunks, libre))
+o3.slides[-1].section = "Método"
+assert not bg.validate_outline(o3, chunks, libre)
+fijas = {**libre, "secciones": ["Introducción", "Propuesta"]}
+assert any("sin sección válida" in e for e in bg.validate_outline(o3, chunks, fijas))
+assert "Una de: Introducción, Propuesta" in bg.regla_secciones(fijas)
 
 # Tablas en markdown: título pegado, numeración del paper, trozos unidos, rotas marcadas
 MD = """# Resultados

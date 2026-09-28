@@ -61,6 +61,10 @@ def estructura(frames: list[str], body: str, lim: dict) -> list[str]:
             errs.append(f"Las secciones no siguen el orden de estilo.toml: {secs}")
         if not secs:
             errs.append("No hay \\section{}: la agenda quedará vacía")
+    elif lim.get("agenda", True) and not secs:
+        errs.append("No hay \\section{}: la agenda quedará vacía")
+    if len(secs) != len(set(secs)):
+        errs.append(f"Hay secciones repetidas o partidas: {secs}")
     return errs
 
 

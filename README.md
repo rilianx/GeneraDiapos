@@ -291,7 +291,10 @@ los sesgos de quien escribió.
 | Preámbulo, tema, macros | `base.tex` | debe tener exactamente un `%%SLIDES%%` |
 | Título/autores | `<<TITLE>>`, `<<AUTHORS>>`, `<<VENUE>>` en `base.tex` | se rellenan desde el guion; si los escribes a mano se respetan |
 | Figuras | automático (PDF) | al leer el paper se recortan sus figuras en `<salida>/figuras/figN.png` (desde el pie «Fig. N»/«Figure N»); el guion las cita como `fig*` y el tipo `figure` las inserta con `\includegraphics` |
-| Secciones y agenda | `[estructura]` en `estilo.toml` | `secciones` (orden de la presentación) y `agenda` (diapo con `\tableofcontents`); la portada siempre va primero |
+| Secciones y agenda | `[estructura]` en `estilo.toml` | por defecto `secciones = []`: el guion decide las secciones según el paper (y tus instrucciones), cada una con diapos seguidas; con una lista, se fijan esas y su orden. `agenda` agrega la diapo con `\tableofcontents`; la portada siempre va primero |
+| Fuentes adicionales | `--extra archivo` (repetible: .pdf, .tex, .md, .txt) | otro paper, notas o detalles; entran como fragmentos `x1sec1`, `x2tab1`… que el guion puede citar (como texto; sin figuras) |
+| Instrucciones | `--instrucciones "texto"` o `--instrucciones archivo.md` | público, duración, énfasis, idioma, secciones…: van al guion y a cada diapo, y mandan sobre la guía de estilo (no sobre el formato ni los límites) |
+| PowerPoint desde un .tex | `python beamer_graph.py --a-pptx presentaciones/x/presentacion.tex` | convierte una presentación ya generada o editada a mano, sin el pipeline (usa `figuras/` y el `.pdf` del mismo nombre) |
 | Reglas de estilo | `estilo.toml` | `[guia].texto` va al guion y a cada diapo; `[guia].guion`, solo al guion; `[limites]` se verifica en código |
 | Reintentos, tolerancias, nº de diapos | constantes al inicio de `beamer_graph.py` | `MAX_SLIDE_ATTEMPTS`, `OVERFULL_TOLERANCE_PT`, `N_SLIDES`… |
 | Extracción de PDF | `--extractor marker` | mejor con ecuaciones; requiere `pip install marker-pdf` |
