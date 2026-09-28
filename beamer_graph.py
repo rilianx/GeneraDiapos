@@ -179,8 +179,8 @@ calcular pesos $w$\;
 \end{algorithm}
 \end{frame}""", (r"\\begin\{algorithm\}", "incluye el pseudocódigo en un entorno algorithm (algorithm2e)")),
     "diagram": (
-        "diagrama de un proceso, flujo o arquitectura (nodos y flechas); se escribe en DOT de Graphviz y "
-        "lo dibuja el pipeline, con 1-2 líneas de lectura",
+        "diagrama de un proceso, flujo, secuencia de mensajes o arquitectura; se escribe como código "
+        "(Mermaid o DOT de Graphviz) y lo dibuja el pipeline, con 1-2 líneas de lectura",
         r"""\begin{frame}{Cada pedido pasa por tres etapas}
 \begin{diagrama}
 digraph {
@@ -227,11 +227,113 @@ AREA_DIAGRAMA_IN = (5.0, 1.9)     # ancho y alto útiles (pulgadas) en una diapo
 
 
 def hay_graphviz() -> bool:
-    return shutil.which("dot") is not None
+    return shutil.which("dot") is not None and os.environ.get("BEAMER_DIAGRAMAS") != "mermaid"
+
+
+def hay_mermaid() -> bool:
+    return shutil.which("mmdc") is not None and os.environ.get("BEAMER_DIAGRAMAS") != "graphviz"
 
 
 def kinds_disponibles() -> dict:
-    return {k: v for k, v in KINDS.items() if k != "diagram" or hay_graphviz()}
+    return {k: v for k, v in KINDS.items() if k != "diagram" or hay_graphviz() or hay_mermaid()}
+
+
+# Mermaid (mermaid-cli, con Chromium sin interfaz): tema con los colores del pipeline
+MERMAID_CONFIG = {
+    "theme": "base",
+    "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif", "fontSize": "16px",
+                       "primaryColor": "#DCE6F2", "primaryBorderColor": "#4F81BD",
+                       "primaryTextColor": "#002060", "lineColor": "#1F497D",
+                       "secondaryColor": "#F2DCDB", "tertiaryColor": "#FFFFFF",
+                       "edgeLabelBackground": "#FFFFFF", "clusterBkg": "#F4F7FB",
+                       "clusterBorder": "#4F81BD", "actorBkg": "#DCE6F2", "actorBorder": "#4F81BD",
+                       "noteBkgColor": "#F2DCDB"},
+    "flowchart": {"curve": "basis", "htmlLabels": False},
+    "sequence": {"mirrorActors": False, "actorMargin": 40, "messageMargin": 28},
+}
+MERMAID_ESCALA = 3                # el PNG sale a 3× (px de 1/96"): nítido en la diapo
+ES_DOT = re.compile(r"^\s*(?:strict\s+)?(?:di)?graph\b[^\n{]*\{")
+
+
+def motor_diagrama(codigo: str) -> str:
+    """DOT si empieza como un grafo de Graphviz (digraph {…}); si no, Mermaid."""
+    return "graphviz" if ES_DOT.match(codigo) else "mermaid"
+
+
+def regla_diagramas() -> str:
+    """Cómo escribir un diagrama según los motores instalados (va en SLIDE_PROMPT)."""
+    base = ("dentro de \\begin{diagrama} … \\end{diagrama} (sin \\includegraphics); solo nodos, flechas y "
+            "etiquetas breves, con el contenido del CONTEXTO. El estilo lo pone el pipeline: no uses colores "
+            "ni fuentes. Pocos nodos (máximo 14).")
+    if hay_mermaid():
+        extra = (" Para un grafo general con muchas conexiones cruzadas puedes usar DOT de Graphviz "
+                 "(digraph { … })." if hay_graphviz() else "")
+        return ("escribe el diagrama en Mermaid (flowchart LR o TD, sequenceDiagram, stateDiagram-v2, "
+                "classDiagram, timeline, mindmap) " + base + extra)
+    return "escribe el grafo en DOT de Graphviz (digraph { … }) " + base
+
+
+EJEMPLO_MERMAID = r"""\begin{frame}{Cada pedido pasa por tres etapas}
+\begin{diagrama}
+flowchart LR
+  entrada["Pedido"] --> validar["Validar datos"] --> procesar["Procesar"] --> salida["Respuesta"]
+  validar -. "error" .-> entrada
+\end{diagrama}
+\small Un pedido inválido vuelve al inicio.
+\end{frame}"""
+
+
+def ejemplo_kind(kind: str) -> str:
+    if kind == "diagram" and hay_mermaid():
+        return EJEMPLO_MERMAID
+    return KINDS[kind][1]
+
+
+def _chromium() -> str | None:
+    for c in (os.environ.get("PUPPETEER_EXECUTABLE_PATH"), "/opt/pw-browsers/chromium",
+              shutil.which("chromium"), shutil.which("chromium-browser"), shutil.which("google-chrome")):
+        if c and Path(c).exists():
+            return c
+    return None
+
+
+def render_mermaid(codigo: str, figdir: Path) -> tuple[str | None, list[str], list[str]]:
+    """Dibuja Mermaid en figdir/diag_<hash>.png (transparente) con mermaid-cli (mmdc). Beamer usa
+    también el PNG: el PDF de mermaid-cli trae fondo blanco, que no calza con el tema."""
+    import hashlib
+    if not shutil.which("mmdc"):
+        return None, ["Diagrama: Mermaid (mmdc) no está instalado; escríbelo en DOT de Graphviz (digraph { … })"], []
+    conf = json.dumps(MERMAID_CONFIG, sort_keys=True)
+    h = hashlib.sha1((conf + codigo.strip()).encode()).hexdigest()[:10]
+    figdir.mkdir(parents=True, exist_ok=True)
+    png = figdir / f"diag_{h}.png"
+    if not png.exists():
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            (t / "d.mmd").write_text(codigo.strip() + "\n")
+            (t / "c.json").write_text(conf)
+            pp = {"args": ["--no-sandbox"], **({"executablePath": _chromium()} if _chromium() else {})}
+            (t / "p.json").write_text(json.dumps(pp))
+            for dest, extra in ((png, ["-s", str(MERMAID_ESCALA), "-b", "transparent"]),):
+                try:
+                    r = subprocess.run(["mmdc", "-q", "-p", str(t / "p.json"), "-c", str(t / "c.json"),
+                                        "-i", str(t / "d.mmd"), "-o", str(dest), *extra],
+                                       capture_output=True, text=True, timeout=90)
+                except subprocess.TimeoutExpired:
+                    return None, ["Diagrama: Mermaid tardó demasiado; simplifica el diagrama"], []
+                if r.returncode or not dest.exists():
+                    lineas = [l for l in (r.stderr or r.stdout).splitlines() if l.strip()]
+                    msg = " ".join(l.strip() for l in lineas[:4] if not l.strip().startswith(("at ", "Parser.")))
+                    return None, [f"Diagrama: el código Mermaid no es válido ({msg[:300]})"], []
+    avisos = []
+    import pymupdf
+    pm = pymupdf.Pixmap(str(png))
+    ancho_in, alto_in = pm.width / (96 * MERMAID_ESCALA), pm.height / (96 * MERMAID_ESCALA)
+    letra = 12 * min(1.0, AREA_DIAGRAMA_IN[0] / max(ancho_in, 0.01), AREA_DIAGRAMA_IN[1] / max(alto_in, 0.01))
+    if letra < MIN_LETRA_DIAGRAMA:
+        avisos.append(f"Diagrama demasiado grande para la diapo: la letra quedaría de {letra:.1f}pt; "
+                      "usa menos nodos o cambia la dirección (LR si es alto, TD si es ancho)")
+    return f"figuras/{png.name}", [], avisos
 
 
 def _dot_con_estilo(dot: str) -> str:
@@ -244,9 +346,12 @@ def _dot_con_estilo(dot: str) -> str:
 
 
 def render_diagrama(dot: str, figdir: Path) -> tuple[str | None, list[str], list[str]]:
-    """Dibuja un DOT en figdir/diag_<hash>.pdf y .png. Devuelve (ruta relativa, errores, avisos de estilo)."""
+    """Dibuja un diagrama (DOT o Mermaid, según el código) en figdir/diag_<hash>.pdf y .png.
+    Devuelve (ruta relativa, errores, avisos de estilo)."""
     import hashlib
-    if not hay_graphviz():
+    if motor_diagrama(dot) == "mermaid":
+        return render_mermaid(dot, figdir)
+    if not shutil.which("dot"):
         return None, ["Diagrama: Graphviz (dot) no está instalado; usa otro tipo de diapositiva"], []
     codigo = _dot_con_estilo(dot.strip())
     h = hashlib.sha1(codigo.encode()).hexdigest()[:10]
@@ -1080,9 +1185,7 @@ las cifras del texto; nunca dejes filas con "--". No crees columnas agregadas (m
 Respeta qué mide cada cifra (p. ej. "ganancia frente al mejor competidor" no es "frente a X").
 - Figuras: solo las fig* del CONTEXTO, con \includegraphics y la ruta exacta que indica \
 ([archivo: figuras/figN.png]); escala con width y height (keepaspectratio) para que quepa.
-- Diagramas (tipo diagram): escribe el grafo en DOT de Graphviz dentro de \begin{{diagrama}} … \
-\end{{diagrama}} (sin \includegraphics); solo nodos, flechas y etiquetas breves, con el contenido del \
-CONTEXTO. El estilo lo pone el pipeline: no uses colores ni fuentes. Pocos nodos (máximo 14).
+- Diagramas (tipo diagram): {diagramas}
 - Debe caber en una pantalla. Si el contenido es mucho, prioriza y resume.
 
 Guía de estilo:
@@ -1865,7 +1968,8 @@ def write_slide(s: SlideState) -> dict:
     frame = call_text(MODEL_SLIDES, SLIDE_PROMPT.format(
         macros=s["macros"], packages=s["packages"], guide=s["style_guide"],
         limits=describe_limits(s["limits"]), notation=s["notation"], kind=spec["kind"],
-        kind_desc=KINDS[spec["kind"]][0], kind_example=KINDS[spec["kind"]][1], title=spec["title"],
+        kind_desc=KINDS[spec["kind"]][0], kind_example=ejemplo_kind(spec["kind"]), title=spec["title"],
+        diagramas=regla_diagramas(),
         bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"],
         section=spec.get("section") or "-", plan=s.get("plan") or "-", num=s["idx"],
         previos=(s["previos"] + "\n\n") if s.get("previos") else "",

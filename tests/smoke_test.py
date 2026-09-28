@@ -186,6 +186,16 @@ if bg.hay_graphviz():
     _, _, a_g = bg.expandir_diagramas(r"\begin{diagrama}" + grande + r"\end{diagrama}", figd)
     assert any("nodos" in x for x in a_g)
     assert "diagram" in bg.kinds_disponibles()
+if bg.hay_mermaid():                                   # Mermaid: se detecta por el código
+    fr_m = (r"\begin{frame}{Mensajes}" "\n" r"\begin{diagrama}" "\n"
+            "sequenceDiagram\n  A->>B: pide\n  B-->>A: responde\n" r"\end{diagrama}" "\n" r"\end{frame}")
+    tex_m, e_m, _ = bg.expandir_diagramas(fr_m, tmp / "diagm" / "figuras")
+    assert not e_m and "diag_" in tex_m and ".png" in tex_m, e_m
+    assert bg.motor_diagrama("sequenceDiagram\n A->>B: x") == "mermaid"
+    assert bg.motor_diagrama("digraph { a -> b }") == "graphviz"
+    _, e_m2, _ = bg.expandir_diagramas(r"\begin{diagrama}flowchart LR" "\n a --> \n" r"\end{diagrama}", tmp / "diagm")
+    assert e_m2 and "Mermaid no es válido" in e_m2[0]
+    assert "Mermaid" in bg.regla_diagramas() and "flowchart" in bg.ejemplo_kind("diagram")
 
 # Herramientas MCP (si está el paquete): validar_frame dice lo mismo que el pipeline
 try:

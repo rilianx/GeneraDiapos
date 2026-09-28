@@ -88,11 +88,15 @@ def main() -> int:
     print("\nOtros (opcionales):")
     dot = shutil.which("dot")
     print(f"  {OK if dot else OPC} Graphviz (dot)               diapositivas de tipo diagram")
+    mmdc = shutil.which("mmdc")
+    print(f"  {OK if mmdc else OPC} Mermaid (mmdc)               diagramas en Mermaid (preferido si está)")
     lo = shutil.which("soffice") or shutil.which("libreoffice")
     print(f"  {OK if lo else OPC} LibreOffice                  ver el .pptx sin PowerPoint")
 
     if not dot:
         print("\nPara diagramas: sudo apt-get install graphviz   (macOS: brew install graphviz)")
+    if not mmdc:
+        print("Para diagramas en Mermaid (requiere Node 18+): npm install -g @mermaid-js/mermaid-cli")
     if not faltan_pip and not faltan_tex and pdflatex:
         print("\nTodo listo.")
         return 0

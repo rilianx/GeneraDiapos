@@ -36,8 +36,8 @@ para el flujo completo y las decisiones de diseño.
 - PowerPoint (`pptx_export.py`, `--pptx`): se deriva de los frames finales en `write_outputs`
   (`exportar_pptx`); Beamer sigue siendo la fuente de verdad. pandoc solo traduce el texto y las
   fórmulas (OMML en `mc:AlternateContent`, con fallback de imagen compilada con LaTeX).
-- Diagramas: `render_diagrama` / `expandir_diagramas` (DOT → `figuras/diag_<hash>.pdf/.png`, estilo
-  `DIAGRAMA_ESTILO`), se expanden en `compile_slide`, `assemble` y `exportar_pptx`; el frame guardado
+- Diagramas: `render_diagrama` / `expandir_diagramas` (`motor_diagrama` elige: DOT → `render_diagrama`,
+  PDF+PNG con `DIAGRAMA_ESTILO`; Mermaid → `render_mermaid`, PNG con `MERMAID_CONFIG`; `regla_diagramas`), se expanden en `compile_slide`, `assemble` y `exportar_pptx`; el frame guardado
   conserva el DOT (lo ven el revisor y los refinados)
 - MCP (`mcp_servidor.py`, `.mcp.json`): herramientas de solo lectura (`validar_frame`,
   `dibujar_diagrama`, `ver_pagina`) que reusan las funciones del pipeline; no escriben estado ni registro

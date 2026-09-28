@@ -24,4 +24,9 @@ if ! command -v dot >/dev/null; then                 # Graphviz: diapositivas de
   DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq --no-install-recommends graphviz >/dev/null
 fi
 
+if command -v npm >/dev/null && ! command -v mmdc >/dev/null; then   # Mermaid (diagramas)
+  if [ -x /opt/pw-browsers/chromium ]; then export PUPPETEER_SKIP_DOWNLOAD=1; fi   # usa el Chromium ya instalado
+  npm install -g -s @mermaid-js/mermaid-cli >/dev/null 2>&1 || true
+fi
+
 python3 -m pip install -q --root-user-action=ignore -r requirements.txt
