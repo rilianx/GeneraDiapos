@@ -242,6 +242,8 @@ assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revis
 # interrupt) y el driver debe reanudar bien, no declarar «Listo» sin hacer nada
 assert calls["lectura"] == 2
 assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
+inf = (tmp / "out_claude" / "informe.md").read_text()      # tiempos por ronda en el informe
+assert "## Tiempos (modo Claude)" in inf and "revisión humana del guion" in inf and "1 lectura" in inf
 assert "Ganancia editada a mano" in json.dumps(graph_c := driver_claude.bg.build_graph(
     __import__("langgraph.checkpoint.sqlite", fromlist=["SqliteSaver"]).SqliteSaver(
         __import__("sqlite3").connect(work / "estado.sqlite", check_same_thread=False))).get_state(

@@ -22,6 +22,8 @@ import json
 import os
 import re
 import sqlite3
+import time
+from collections import Counter
 from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -31,6 +33,7 @@ import beamer_graph as bg
 
 PENDIENTES = "pendientes.json"
 COMUN = "comun.md"
+TIEMPOS = "tiempos.jsonl"
 MIN_COMUN = 150          # un párrafo más corto no vale la pena compartirlo
 
 
@@ -166,6 +169,7 @@ def escribir_tareas(d: Path, interrupts, meta: dict, values: dict) -> list[dict]
         archivos.append((tareas / name, f"# {tag}\n\nRespuesta: `{resp}`\nPaper: `{meta['paper']}`",
                          cuerpo))
         pend.append({"id": it.id, "tarea": str(tareas / name), "respuesta": str(resp),
+                     "etiqueta": tag.split(" ")[0],
                      "tipo": "guion" if "outline" in p else p["formato"],
                      "esquema": p.get("esquema")})
     cuerpos, comun = compactar([c for _, _, c in archivos])
@@ -224,14 +228,55 @@ def valor_resume(ans: dict, snap):
     return next(iter(ans.values())) if len(ans) == 1 and len(snap.interrupts) == 1 else ans
 
 
-def listo(graph, cfg, meta: dict) -> int:
+def registrar_tiempo(d: Path, inicio: float, respondidas: list[dict], nuevas: list[dict],
+                     invalidas: int = 0) -> None:
+    """Una línea por ejecución: cuánto corrió el pipeline y qué tareas cerró y abrió. El
+    tiempo de Claude (o de la persona) es el hueco entre el fin de una ejecución y el
+    inicio de la siguiente."""
+    with open(d / TIEMPOS, "a") as f:
+        f.write(json.dumps({"inicio": inicio, "fin": time.time(),
+                            "respondidas": dict(Counter(t.get("etiqueta", "?") for t in respondidas)),
+                            "nuevas": dict(Counter(t.get("etiqueta", "?") for t in nuevas)),
+                            "invalidas": invalidas}, ensure_ascii=False) + "\n")
+
+
+def resumen_tiempos(d: Path) -> tuple[list[str], str]:
+    """Tabla de tiempos por ronda (markdown) y una línea de resumen."""
+    f = d / TIEMPOS
+    if not f.exists():
+        return [], ""
+    rs = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+    fmt = lambda c: ", ".join(f"{n} {k}" for k, n in c.items()) or "-"
+    filas, tot = [], {"claude": 0.0, "persona": 0.0, "pipeline": 0.0}
+    for prev, r in zip([None] + rs[:-1], rs):
+        pipe = r["fin"] - r["inicio"]
+        tot["pipeline"] += pipe
+        hueco = r["inicio"] - prev["fin"] if prev else 0.0
+        quien = "persona" if "revision-guion" in r["respondidas"] else "claude"
+        tot[quien] += hueco
+        filas.append(f"| {len(filas) + 1} | {fmt(r['respondidas']) if prev else 'inicio'} | "
+                     f"{hueco:.0f} ({quien}) | {pipe:.0f} | {fmt(r['nuevas'])}"
+                     + (f" · {r['invalidas']} inválida(s)" if r["invalidas"] else "") + " |")
+    tabla = ["\n## Tiempos (modo Claude)\n",
+             "| Ronda | Tareas respondidas | Respuesta (s) | Pipeline (s) | Tareas nuevas |",
+             "|---|---|---|---|---|"] + filas + [
+             f"\nClaude: {tot['claude'] / 60:.1f} min · pipeline: {tot['pipeline'] / 60:.1f} min · "
+             f"revisión humana del guion: {tot['persona'] / 60:.1f} min"]
+    return tabla, tabla[-1].strip()
+
+
+def listo(graph, cfg, meta: dict, d: Path | None = None) -> int:
     """Solo se declara terminado si el grafo terminó de verdad y dejó el PDF."""
     snap = graph.get_state(cfg)
     pdf = Path(meta["out"]) / "presentacion.pdf"
     if snap.next or any(t.interrupts for t in snap.tasks) or not pdf.exists():
         raise RuntimeError(f"el grafo quedó sin terminar (siguiente: {snap.next or '-'}, "
                            f"PDF {'sí' if pdf.exists() else 'no'} existe)")
-    print(f"Listo: {pdf} (ver {Path(meta['out']) / 'informe.md'})")
+    informe = Path(meta["out"]) / "informe.md"
+    tabla, linea = resumen_tiempos(d) if d else ([], "")
+    if tabla and informe.exists() and "## Tiempos (modo Claude)" not in informe.read_text():
+        informe.write_text(informe.read_text().rstrip() + "\n" + "\n".join(tabla) + "\n")
+    print(f"Listo: {pdf} (ver {informe})" + (f"\n{linea}" if linea else ""))
     return 0
 
 
@@ -244,6 +289,7 @@ def informar(pend: list[dict]) -> None:
 
 
 def run(args) -> int:
+    inicio = time.time()
     bg.PROVIDER = "claude"
     d = Path(args.claude)
     (d / "tareas").mkdir(parents=True, exist_ok=True)
@@ -267,18 +313,23 @@ def run(args) -> int:
     else:
         meta = json.loads(meta_f.read_text())
         if not snap.next and not any(t.interrupts for t in snap.tasks):
-            return listo(graph, cfg, meta)
+            return listo(graph, cfg, meta, d)
         pend = json.loads((d / PENDIENTES).read_text())
         ans, faltan, errores = leer_respuestas(pend, snap.values)
         for e in errores:
             print(f"RESPUESTA INVÁLIDA (corrígela): {e}")
         if faltan or errores:
             informar([t for t in pend if t["id"] not in ans])
+            registrar_tiempo(d, inicio, [t for t in pend if t["id"] in ans], [], len(errores) + len(faltan))
             return 3
         result = graph.invoke(Command(resume=valor_resume(ans, snap)), cfg)
 
+    respondidas = [] if not snap.values else pend
     interrupts = result.get("__interrupt__", [])
     if interrupts:
-        informar(escribir_tareas(d, interrupts, meta, graph.get_state(cfg).values))
+        nuevas = escribir_tareas(d, interrupts, meta, graph.get_state(cfg).values)
+        registrar_tiempo(d, inicio, respondidas, nuevas)
+        informar(nuevas)
         return 3
-    return listo(graph, cfg, meta)
+    registrar_tiempo(d, inicio, respondidas, [])
+    return listo(graph, cfg, meta, d)
