@@ -218,6 +218,10 @@ if bg.hay_graphviz():
     _, _, a_g = bg.expandir_diagramas(r"\begin{diagrama}" + grande + r"\end{diagrama}", figd)
     assert any("nodos" in x for x in a_g)
     assert "diagram" in bg.kinds_disponibles()
+# Navegadores de snap no sirven para mermaid-cli (no leen /usr/local/lib): se descartan
+(tmp / "snapnav").write_text('#!/bin/sh\nexec /snap/bin/chromium "$@"\n')
+(tmp / "nav").write_text('#!/bin/sh\nexec /opt/google/chrome/chrome "$@"\n')
+assert bg.es_snap(str(tmp / "snapnav")) and not bg.es_snap(str(tmp / "nav"))
 if bg.hay_mermaid():                                   # Mermaid: se detecta por el código
     fr_m = (r"\begin{frame}{Mensajes}" "\n" r"\begin{diagrama}" "\n"
             "sequenceDiagram\n  A->>B: pide\n  B-->>A: responde\n" r"\end{diagrama}" "\n" r"\end{frame}")

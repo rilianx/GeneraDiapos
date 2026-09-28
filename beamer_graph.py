@@ -319,10 +319,24 @@ def ejemplo_kind(kind: str) -> str:
     return KINDS[kind][1]
 
 
+def es_snap(ruta: str) -> bool:
+    """Navegador de snap (o script que lo lanza): su confinamiento no deja leer
+    /usr/local/lib/node_modules, donde está la página de mermaid-cli."""
+    real = Path(ruta).resolve()
+    if str(real).startswith("/snap/"):
+        return True
+    try:
+        return real.stat().st_size < 20000 and "/snap/" in real.read_text(errors="ignore")
+    except OSError:
+        return False
+
+
 def _chromium() -> str | None:
-    for c in (os.environ.get("PUPPETEER_EXECUTABLE_PATH"), "/opt/pw-browsers/chromium",
-              shutil.which("chromium"), shutil.which("chromium-browser"), shutil.which("google-chrome")):
-        if c and Path(c).exists():
+    if os.environ.get("PUPPETEER_EXECUTABLE_PATH"):     # elección explícita del usuario
+        return os.environ["PUPPETEER_EXECUTABLE_PATH"]
+    for c in ("/opt/pw-browsers/chromium", shutil.which("google-chrome"), shutil.which("google-chrome-stable"),
+              shutil.which("chromium"), shutil.which("chromium-browser")):
+        if c and Path(c).exists() and not es_snap(c):
             return c
     return None
 
