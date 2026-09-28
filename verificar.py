@@ -52,6 +52,39 @@ def pandoc() -> str | None:
     return None
 
 
+def probar_dot() -> tuple[bool, str]:
+    """Que dot exista no basta: se dibuja un grafo mínimo."""
+    if not shutil.which("dot"):
+        return False, ""
+    r = subprocess.run(["dot", "-Tplain"], input="digraph { a -> b }", capture_output=True, text=True, timeout=30)
+    return r.returncode == 0, " ".join(r.stderr.split())[:120]
+
+
+def probar_mmdc() -> tuple[bool, str]:
+    """Que mmdc exista no basta (una instalación rota falla al abrir su página): se dibuja uno."""
+    import json
+    import os
+    import tempfile
+    if not shutil.which("mmdc"):
+        return False, ""
+    with tempfile.TemporaryDirectory() as t:
+        chrome = next((c for c in (os.environ.get("PUPPETEER_EXECUTABLE_PATH"), "/opt/pw-browsers/chromium",
+                                   shutil.which("chromium"), shutil.which("google-chrome")) if c and os.path.exists(c)), None)
+        with open(f"{t}/p.json", "w") as f:
+            json.dump({"args": ["--no-sandbox"], **({"executablePath": chrome} if chrome else {})}, f)
+        with open(f"{t}/d.mmd", "w") as f:
+            f.write("flowchart LR\n  a --> b\n")
+        try:
+            r = subprocess.run(["mmdc", "-q", "-p", f"{t}/p.json", "-i", f"{t}/d.mmd", "-o", f"{t}/d.png"],
+                               capture_output=True, text=True, timeout=90)
+        except subprocess.TimeoutExpired:
+            return False, "no respondió en 90 s"
+        if r.returncode == 0 and os.path.exists(f"{t}/d.png"):
+            return True, ""
+        lineas = [l.strip() for l in (r.stderr or r.stdout).splitlines() if l.strip() and not l.strip().startswith("at ")]
+        return False, " ".join(lineas[:2])[:160] or "no dibujó el diagrama de prueba"
+
+
 def main() -> int:
     faltan_pip, faltan_tex, obligatorio = [], [], False
     print("# Qué hay y qué falta\n")
@@ -86,17 +119,24 @@ def main() -> int:
             obligatorio |= req
 
     print("\nOtros (opcionales):")
-    dot = shutil.which("dot")
-    print(f"  {OK if dot else OPC} Graphviz (dot)               diapositivas de tipo diagram")
-    mmdc = shutil.which("mmdc")
-    print(f"  {OK if mmdc else OPC} Mermaid (mmdc)               diagramas en Mermaid (preferido si está)")
+    dot, dot_msg = probar_dot()
+    print(f"  {OK if dot else (NO if shutil.which('dot') else OPC)} Graphviz (dot)               "
+          f"diapositivas de tipo diagram{'' if dot or not dot_msg else ' — ' + dot_msg}")
+    mmdc, mmdc_msg = probar_mmdc()
+    print(f"  {OK if mmdc else (NO if shutil.which('mmdc') else OPC)} Mermaid (mmdc)               "
+          f"diagramas en Mermaid (preferido si está){'' if mmdc or not mmdc_msg else ' — ' + mmdc_msg}")
     lo = shutil.which("soffice") or shutil.which("libreoffice")
     print(f"  {OK if lo else OPC} LibreOffice                  ver el .pptx sin PowerPoint")
 
     if not dot:
         print("\nPara diagramas: sudo apt-get install graphviz   (macOS: brew install graphviz)")
     if not mmdc:
-        print("Para diagramas en Mermaid (requiere Node 18+): npm install -g @mermaid-js/mermaid-cli")
+        if shutil.which("mmdc"):
+            print("Mermaid está instalado pero no funciona; reinstálalo:\n"
+                  "  npm uninstall -g @mermaid-js/mermaid-cli && npm install -g @mermaid-js/mermaid-cli\n"
+                  "  (con sudo si lo instalaste con sudo; necesita Node 18+ y descarga su Chromium)")
+        else:
+            print("Para diagramas en Mermaid (requiere Node 18+): npm install -g @mermaid-js/mermaid-cli")
     if not faltan_pip and not faltan_tex and pdflatex:
         print("\nTodo listo.")
         return 0

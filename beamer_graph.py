@@ -226,12 +226,39 @@ MIN_LETRA_DIAGRAMA = 6.0          # pt que tendría la letra del nodo una vez aj
 AREA_DIAGRAMA_IN = (5.0, 1.9)     # ancho y alto útiles (pulgadas) en una diapo 16:9 de metropolis
 
 
+_MOTORES: dict[str, tuple[bool, str]] = {}      # motor → (funciona, motivo); se prueba una vez
+
+
+def probar_motor(motor: str) -> tuple[bool, str]:
+    """Que el comando exista no basta (p. ej. un mermaid-cli mal instalado): se dibuja un
+    diagrama mínimo una vez por proceso."""
+    if motor in _MOTORES:
+        return _MOTORES[motor]
+    if motor == "graphviz":
+        if not shutil.which("dot"):
+            res = (False, "Graphviz (dot) no está instalado")
+        else:
+            r = subprocess.run(["dot", "-Tplain"], input="digraph { a -> b }", capture_output=True,
+                               text=True, timeout=30)
+            res = (r.returncode == 0, "" if r.returncode == 0 else f"dot falla: {r.stderr.strip()[:200]}")
+    else:
+        if not shutil.which("mmdc"):
+            res = (False, "Mermaid (mmdc) no está instalado")
+        else:
+            with tempfile.TemporaryDirectory() as t:
+                _MOTORES[motor] = (True, "")                  # para que render_mermaid lo intente
+                ruta, err, _ = render_mermaid("flowchart LR\n  a --> b", Path(t) / "figuras", prueba=True)
+                res = (bool(ruta), "" if ruta else (err[0] if err else "mermaid-cli no dibujó la prueba"))
+    _MOTORES[motor] = res
+    return res
+
+
 def hay_graphviz() -> bool:
-    return shutil.which("dot") is not None and os.environ.get("BEAMER_DIAGRAMAS") != "mermaid"
+    return os.environ.get("BEAMER_DIAGRAMAS") != "mermaid" and probar_motor("graphviz")[0]
 
 
 def hay_mermaid() -> bool:
-    return shutil.which("mmdc") is not None and os.environ.get("BEAMER_DIAGRAMAS") != "graphviz"
+    return os.environ.get("BEAMER_DIAGRAMAS") != "graphviz" and probar_motor("mermaid")[0]
 
 
 def kinds_disponibles() -> dict:
@@ -262,9 +289,9 @@ def motor_diagrama(codigo: str) -> str:
 
 def regla_diagramas() -> str:
     """Cómo escribir un diagrama según los motores instalados (va en SLIDE_PROMPT)."""
-    base = ("dentro de \\begin{diagrama} … \\end{diagrama} (sin \\includegraphics); solo nodos, flechas y "
-            "etiquetas breves, con el contenido del CONTEXTO. El estilo lo pone el pipeline: no uses colores "
-            "ni fuentes. Pocos nodos (máximo 14).")
+    base = ("dentro de \\begin{diagrama} … \\end{diagrama} (sin \\includegraphics ni TikZ); solo nodos, "
+            "flechas y etiquetas breves, con el contenido del CONTEXTO. El estilo lo pone el pipeline: no uses "
+            "colores ni fuentes. Pocos nodos (máximo 14).")
     if hay_mermaid():
         extra = (" Para un grafo general con muchas conexiones cruzadas puedes usar DOT de Graphviz "
                  "(digraph { … })." if hay_graphviz() else "")
@@ -297,7 +324,11 @@ def _chromium() -> str | None:
     return None
 
 
-def render_mermaid(codigo: str, figdir: Path) -> tuple[str | None, list[str], list[str]]:
+ERROR_DE_CODIGO_MERMAID = ("Parse error", "Lexical error", "Syntax error", "UnknownDiagramError",
+                           "No diagram type detected", "Expecting ")
+
+
+def render_mermaid(codigo: str, figdir: Path, prueba: bool = False) -> tuple[str | None, list[str], list[str]]:
     """Dibuja Mermaid en figdir/diag_<hash>.png (transparente) con mermaid-cli (mmdc). Beamer usa
     también el PNG: el PDF de mermaid-cli trae fondo blanco, que no calza con el tema."""
     import hashlib
@@ -324,7 +355,13 @@ def render_mermaid(codigo: str, figdir: Path) -> tuple[str | None, list[str], li
                 if r.returncode or not dest.exists():
                     lineas = [l for l in (r.stderr or r.stdout).splitlines() if l.strip()]
                     msg = " ".join(l.strip() for l in lineas[:4] if not l.strip().startswith(("at ", "Parser.")))
-                    return None, [f"Diagrama: el código Mermaid no es válido ({msg[:300]})"], []
+                    if prueba or any(k in msg for k in ERROR_DE_CODIGO_MERMAID):
+                        return None, [f"Diagrama: el código Mermaid no es válido ({msg[:300]})"], []
+                    # no es el código: mermaid-cli no funciona aquí (instalación, navegador…)
+                    _MOTORES["mermaid"] = (False, msg[:200])
+                    otro = ("escribe el diagrama en DOT de Graphviz (digraph { … })" if hay_graphviz()
+                            else "no hay otro motor: muestra el proceso como lista numerada o bloques, sin TikZ")
+                    return None, [f"Diagrama: Mermaid no funciona en esta máquina ({msg[:160]}); {otro}"], []
     avisos = []
     import pymupdf
     pm = pymupdf.Pixmap(str(png))
@@ -352,7 +389,9 @@ def render_diagrama(dot: str, figdir: Path) -> tuple[str | None, list[str], list
     if motor_diagrama(dot) == "mermaid":
         return render_mermaid(dot, figdir)
     if not shutil.which("dot"):
-        return None, ["Diagrama: Graphviz (dot) no está instalado; usa otro tipo de diapositiva"], []
+        otro = ("escribe el diagrama en Mermaid (flowchart LR, sequenceDiagram…)" if hay_mermaid()
+                else "no hay motor de diagramas: muestra el proceso como lista numerada o bloques, sin TikZ")
+        return None, [f"Diagrama: Graphviz (dot) no está instalado; {otro}"], []
     codigo = _dot_con_estilo(dot.strip())
     h = hashlib.sha1(codigo.encode()).hexdigest()[:10]
     figdir.mkdir(parents=True, exist_ok=True)
@@ -1831,7 +1870,17 @@ def fan_out(state: State) -> list[Send]:
         "instrucciones": bloque_instrucciones(state),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
         "warnings": [],
-    }) for i, s in enumerate(o["slides"])]
+    }) for i, s in enumerate(map(sin_motor_a_bloque, o["slides"]))]
+
+
+def sin_motor_a_bloque(s: dict) -> dict:
+    """Una diapo diagram sin ningún motor que funcione pasa a block (con aviso), en vez de
+    obligar al modelo a improvisar con TikZ."""
+    if s.get("kind") != "diagram" or hay_graphviz() or hay_mermaid():
+        return s
+    motivo = "; ".join(m for _, m in (probar_motor("mermaid"), probar_motor("graphviz")) if m)
+    aviso = f"Se pidió un diagrama, pero no hay motor que funcione ({motivo}): va como bloque."
+    return {**s, "kind": "block", "aviso": " ".join(filter(None, [s.get("aviso", ""), aviso]))}
 
 
 def assemble(state: State) -> dict:

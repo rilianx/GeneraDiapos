@@ -211,6 +211,27 @@ if mcp_servidor:
     assert len(bg.leer_errores()) == n_log                               # solo lectura: no anota en el registro
     assert json.loads(mcp_servidor.dibujar_diagrama("digraph{a->}")[0])["errores"]
 
+# Motores que no funcionan (caso real: mermaid-cli mal instalado y sin Graphviz): no se ofrecen,
+# y una diapo diagram del guion pasa a block con aviso, en vez de improvisar con TikZ
+falso = tmp / "bin_falso"
+falso.mkdir()
+(falso / "mmdc").write_text("#!/bin/sh\necho 'Error: net::ERR_FILE_NOT_FOUND at file:///x/dist/index.html' >&2\nexit 1\n")
+(falso / "mmdc").chmod(0o755)
+path0, env0 = os.environ["PATH"], os.environ.get("BEAMER_DIAGRAMAS")
+os.environ["PATH"] = f"{falso}:{path0}"
+os.environ["BEAMER_DIAGRAMAS"] = "mermaid"          # y sin Graphviz
+bg._MOTORES.clear()
+assert not bg.hay_mermaid() and "ERR_FILE_NOT_FOUND" in bg.probar_motor("mermaid")[1]
+assert "diagram" not in bg.kinds_disponibles()
+d_ = bg.sin_motor_a_bloque({"kind": "diagram", "title": "T", "aviso": ""})
+assert d_["kind"] == "block" and "no hay motor" in d_["aviso"]
+os.environ["PATH"] = path0
+if env0 is None:
+    del os.environ["BEAMER_DIAGRAMAS"]
+else:
+    os.environ["BEAMER_DIAGRAMAS"] = env0
+bg._MOTORES.clear()
+
 # Secciones libres: toda diapo con sección y cada sección con diapos seguidas; fijas: las de estilo.toml
 libre = dict(bg.STYLE_DEFAULTS)
 sec = lambda n: bg.SlideSpec(title="T", bullets=["x"], kind="block", sources=["sec1"], section=n)
