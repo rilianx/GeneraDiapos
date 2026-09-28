@@ -31,6 +31,7 @@ Reglas (el pipeline ya valida y reintenta; tu trabajo es solo responder):
   instales nada. No leas el README ni el código: no hace falta.
 - Si el comando falla con algo que no sea «RESPUESTA INVÁLIDA», muestra el error al
   usuario y detente; no intentes repararlo.
+  Si el error es un módulo o comando que falta, sugiere `python verificar.py`.
 - Responde todas las tareas de la ronda y recién entonces vuelve a ejecutar el comando.
 - Sin comentarios entre rondas: habla con el usuario solo para el guion (revisión) y al
   final (ruta del PDF y avisos, en pocas líneas).

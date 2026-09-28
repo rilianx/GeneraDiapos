@@ -185,6 +185,7 @@ sudo apt-get install texlive-latex-recommended texlive-latex-extra \
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
+python verificar.py                 # qué falta instalar y cómo
 python tests/smoke_test.py          # debe terminar en "OK"
 ```
 
