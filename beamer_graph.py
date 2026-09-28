@@ -297,7 +297,10 @@ def regla_diagramas() -> str:
                  "(digraph { … })." if hay_graphviz() else "")
         return ("escribe el diagrama en Mermaid (flowchart LR o TD, sequenceDiagram, stateDiagram-v2, "
                 "classDiagram, timeline, mindmap) " + base + extra)
-    return "escribe el grafo en DOT de Graphviz (digraph { … }) " + base
+    if hay_graphviz():
+        return "escribe el grafo en DOT de Graphviz (digraph { … }) " + base
+    return ("no hay motor de diagramas en esta máquina: no escribas \\begin{diagrama} ni TikZ; muestra "
+            "procesos y flujos como lista numerada, columnas o bloques.")
 
 
 EJEMPLO_MERMAID = r"""\begin{frame}{Cada pedido pasa por tres etapas}
@@ -388,10 +391,10 @@ def render_diagrama(dot: str, figdir: Path) -> tuple[str | None, list[str], list
     import hashlib
     if motor_diagrama(dot) == "mermaid":
         return render_mermaid(dot, figdir)
-    if not shutil.which("dot"):
+    if not hay_graphviz():
         otro = ("escribe el diagrama en Mermaid (flowchart LR, sequenceDiagram…)" if hay_mermaid()
                 else "no hay motor de diagramas: muestra el proceso como lista numerada o bloques, sin TikZ")
-        return None, [f"Diagrama: Graphviz (dot) no está instalado; {otro}"], []
+        return None, [f"Diagrama: Graphviz (dot) no está disponible; {otro}"], []
     codigo = _dot_con_estilo(dot.strip())
     h = hashlib.sha1(codigo.encode()).hexdigest()[:10]
     figdir.mkdir(parents=True, exist_ok=True)

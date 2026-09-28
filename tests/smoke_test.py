@@ -225,6 +225,9 @@ assert not bg.hay_mermaid() and "ERR_FILE_NOT_FOUND" in bg.probar_motor("mermaid
 assert "diagram" not in bg.kinds_disponibles()
 d_ = bg.sin_motor_a_bloque({"kind": "diagram", "title": "T", "aviso": ""})
 assert d_["kind"] == "block" and "no hay motor" in d_["aviso"]
+assert "no escribas" in bg.regla_diagramas()             # el prompt no pide DOT ni Mermaid
+_, e_sm, _ = bg.expandir_diagramas(r"\begin{diagrama}digraph { a -> b }\end{diagrama}", tmp / "sin_motor")
+assert e_sm and "no hay motor" in e_sm[0]                 # aunque exista dot, si está desactivado
 os.environ["PATH"] = path0
 if env0 is None:
     del os.environ["BEAMER_DIAGRAMAS"]
