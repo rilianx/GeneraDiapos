@@ -15,6 +15,27 @@ import sys
 
 OK, NO, OPC = "✔", "✘", "·"
 
+
+def navegador_mermaid() -> str | None:
+    """Lo mismo que _chromium de beamer_graph (salta los de snap), sin importarlo."""
+    import os
+    from pathlib import Path
+    if os.environ.get("PUPPETEER_EXECUTABLE_PATH"):
+        return os.environ["PUPPETEER_EXECUTABLE_PATH"]
+    for c in ("/opt/pw-browsers/chromium", shutil.which("google-chrome"), shutil.which("google-chrome-stable"),
+              shutil.which("chromium"), shutil.which("chromium-browser")):
+        if not c or not Path(c).exists():
+            continue
+        real = Path(c).resolve()
+        try:
+            snap = str(real).startswith("/snap/") or (real.stat().st_size < 20000
+                                                      and "/snap/" in real.read_text(errors="ignore"))
+        except OSError:
+            snap = False
+        if not snap:
+            return c
+    return None                     # mmdc probará con el Chrome propio de puppeteer, si lo hay
+
 # (módulo de Python, paquete pip, para qué, obligatorio)
 PAQUETES = [
     ("langgraph", "langgraph", "el grafo del pipeline", True),
@@ -68,8 +89,7 @@ def probar_mmdc() -> tuple[bool, str]:
     if not shutil.which("mmdc"):
         return False, ""
     with tempfile.TemporaryDirectory() as t:
-        chrome = next((c for c in (os.environ.get("PUPPETEER_EXECUTABLE_PATH"), "/opt/pw-browsers/chromium",
-                                   shutil.which("chromium"), shutil.which("google-chrome")) if c and os.path.exists(c)), None)
+        chrome = navegador_mermaid()
         with open(f"{t}/p.json", "w") as f:
             json.dump({"args": ["--no-sandbox"], **({"executablePath": chrome} if chrome else {})}, f)
         with open(f"{t}/d.mmd", "w") as f:
@@ -131,7 +151,10 @@ def main() -> int:
     if not dot:
         print("\nPara diagramas: sudo apt-get install graphviz   (macOS: brew install graphviz)")
     if not mmdc:
-        if shutil.which("mmdc"):
+        if shutil.which("mmdc") and not navegador_mermaid():
+            print("Mermaid necesita un Chrome fuera de snap (el de snap no lee /usr/local/lib): instala\n"
+                  "  Google Chrome (.deb) o define PUPPETEER_EXECUTABLE_PATH con la ruta del navegador")
+        elif shutil.which("mmdc"):
             print("Mermaid está instalado pero no funciona; reinstálalo:\n"
                   "  npm uninstall -g @mermaid-js/mermaid-cli && npm install -g @mermaid-js/mermaid-cli\n"
                   "  (con sudo si lo instalaste con sudo; necesita Node 18+ y descarga su Chromium)")
