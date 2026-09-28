@@ -197,7 +197,8 @@ def informar(pend: list[dict]) -> None:
     print(f"{len(pend)} tarea(s) pendiente(s):")
     for t in pend:
         print(f"- {t['tarea']}  →  {t['respuesta']}")
-    print("Responde cada una y vuelve a ejecutar el mismo comando con --claude.")
+    print("Responde todas y vuelve a ejecutar el mismo comando con --claude. Escribe solo los "
+          "archivos de respuesta: no modifiques código ni configuración, y no comentes entre rondas.")
 
 
 def run(args) -> int:

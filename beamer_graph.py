@@ -1672,7 +1672,16 @@ def main() -> None:
     args = ap.parse_args()
     if args.claude:
         from driver_claude import run
-        raise SystemExit(run(args))
+        try:
+            raise SystemExit(run(args))
+        except Exception as e:                   # fallo del pipeline, no de una respuesta
+            import traceback
+            log = Path(args.claude) / "error.log"
+            log.write_text(traceback.format_exc())
+            print(f"ERROR del pipeline: {type(e).__name__}: {e}\n(detalle en {log})\n"
+                  "No es un problema de tus respuestas: no modifiques el código; muéstrale este "
+                  "error al usuario y detente.")
+            raise SystemExit(1)
     guion = json.loads(Path(args.guion).read_text()) if args.guion else {}
     args.source = args.source or guion.get("paper")
     if not args.source:

@@ -1,5 +1,9 @@
 # Contexto para trabajar en este repo
 
+> **¿Te pidieron una presentación?** Usa la skill `paper2beamer` y sigue sus reglas: no
+> modifiques código ni tests, y si el pipeline falla, muestra el error y detente. Lo que
+> sigue es solo para cuando te piden cambiar el código del pipeline.
+
 Pipeline de LangGraph que convierte papers en presentaciones Beamer. Ver README.md
 para el flujo completo y las decisiones de diseño.
 

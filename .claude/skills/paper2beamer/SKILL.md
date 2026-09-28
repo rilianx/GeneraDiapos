@@ -1,6 +1,7 @@
 ---
 name: paper2beamer
 description: Genera una presentación LaTeX Beamer a partir de un paper (.pdf, .tex o .md) con el pipeline de este repo en modo Claude Code, sin API. Usar cuando se pida hacer o preparar diapositivas o una presentación de un paper.
+allowed-tools: Bash(python beamer_graph.py:*), Bash(.venv/bin/python beamer_graph.py:*), Read, Write
 ---
 
 El pipeline (`beamer_graph.py`) decide los pasos y valida; tú solo respondes las
@@ -18,3 +19,12 @@ Luego, hasta que diga «Listo»:
 
 Si una respuesta no valida, el comando lo dice: corrige ese archivo y vuelve a ejecutarlo.
 Al terminar, muestra `presentaciones/<nombre>/presentacion.pdf` y los avisos de `informe.md`.
+
+Reglas (el pipeline ya valida y reintenta; tu trabajo es solo responder):
+- No modifiques código ni configuración (`*.py`, `base.tex`, `estilo.toml`, tests) ni
+  instales nada. No leas el README ni el código: no hace falta.
+- Si el comando falla con algo que no sea «RESPUESTA INVÁLIDA», muestra el error al
+  usuario y detente; no intentes repararlo.
+- Responde todas las tareas de la ronda y recién entonces vuelve a ejecutar el comando.
+- Sin comentarios entre rondas: habla con el usuario solo para el guion (revisión) y al
+  final (ruta del PDF y avisos, en pocas líneas).
