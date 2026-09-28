@@ -215,6 +215,15 @@ def leer_respuestas(pend: list[dict], values: dict) -> tuple[dict, list[str], li
     return ans, faltan, errores
 
 
+def valor_resume(ans: dict, snap):
+    """Un nodo que repite su pregunta (p. ej. validar_lectura rechazó el inventario) reusa el
+    id del interrupt: reanudar con {id: valor} deja el grafo roto. Eso solo pasa cuando el
+    grafo tiene un único interrupt pendiente, y entonces se reanuda con el valor. Con diapos
+    en paralelo el grafo puede listar varios de un mismo paso aunque la ronda tenga una sola
+    tarea: ahí se reanuda por id."""
+    return next(iter(ans.values())) if len(ans) == 1 and len(snap.interrupts) == 1 else ans
+
+
 def listo(graph, cfg, meta: dict) -> int:
     """Solo se declara terminado si el grafo terminó de verdad y dejó el PDF."""
     snap = graph.get_state(cfg)
@@ -266,13 +275,7 @@ def run(args) -> int:
         if faltan or errores:
             informar([t for t in pend if t["id"] not in ans])
             return 3
-        # Un nodo que repite su pregunta (p. ej. validar_lectura rechazó el inventario) reusa
-        # el id del interrupt: reanudar con {id: valor} deja el grafo roto. Eso solo pasa cuando
-        # el grafo tiene un único interrupt pendiente, y entonces se reanuda con el valor. Con
-        # diapos en paralelo el grafo puede listar varios (de un mismo paso) aunque la ronda
-        # tenga una sola tarea: ahí se reanuda por id.
-        resume = next(iter(ans.values())) if len(pend) == 1 and len(snap.interrupts) == 1 else ans
-        result = graph.invoke(Command(resume=resume), cfg)
+        result = graph.invoke(Command(resume=valor_resume(ans, snap)), cfg)
 
     interrupts = result.get("__interrupt__", [])
     if interrupts:

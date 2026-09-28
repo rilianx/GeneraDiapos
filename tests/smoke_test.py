@@ -258,12 +258,50 @@ try:
 except SystemExit:
     pass
 del os.environ["LLM_REVISOR"]
+# valor_resume: (a) diapos en paralelo: una sola tarea en la ronda pero el grafo lista varios
+# interrupts de un mismo paso → por id; (b) un nodo que repite su pregunta → con el valor
+import operator
+from typing import Annotated, TypedDict
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send, interrupt
+from langgraph.checkpoint.memory import MemorySaver
+class _S(TypedDict, total=False):
+    out: Annotated[list, operator.add]
+class _Sub(_S, total=False):
+    k: int
+def _a(s): return {"out": [interrupt("escribir")]}
+def _b(s): return {"out": [interrupt("revisar")]} if s["k"] == 0 else {}
+_sg = StateGraph(_Sub); _sg.add_node("a", _a); _sg.add_node("b", _b)
+_sg.add_edge(START, "a"); _sg.add_edge("a", "b"); _sg.add_edge("b", END)
+_g = StateGraph(_S); _g.add_node("slide", _sg.compile())
+_g.add_conditional_edges(START, lambda s: [Send("slide", {"k": i}) for i in range(3)], ["slide"])
+_g.add_edge("slide", END)
+def _ronda(G, c, r):
+    ans = {i.id: "ok" for i in r["__interrupt__"]}
+    return G.invoke(Command(resume=driver_claude.valor_resume(ans, G.get_state(c))), c)
+G, c = _g.compile(checkpointer=MemorySaver()), {"configurable": {"thread_id": "p"}}
+r = _ronda(G, c, G.invoke({}, c))
+assert len(r["__interrupt__"]) == 1 and len(G.get_state(c).interrupts) > 1   # el caso real
+r = _ronda(G, c, r)
+assert not r.get("__interrupt__") and len(r["out"]) == 4 and not G.get_state(c).next
+def _reintenta(s):                                   # como lectura: pregunta hasta que valida
+    while (v := interrupt("inventario")) != "bueno":
+        pass
+    return {"out": [v]}
+_h = StateGraph(_S); _h.add_node("n", _reintenta); _h.add_edge(START, "n"); _h.add_edge("n", END)
+H, c = _h.compile(checkpointer=MemorySaver()), {"configurable": {"thread_id": "r"}}
+r = H.invoke({}, c)
+for v in ("malo", "bueno"):
+    r = H.invoke(Command(resume=driver_claude.valor_resume({r["__interrupt__"][0].id: v}, H.get_state(c))), c)
+assert r["out"] == ["bueno"] and not H.get_state(c).next
 # compactar: lo repetido va una vez al archivo común y expandir lo devuelve intacto
 largo = "Reglas:\n" + "- regla fija\n" * 20
 cs, com = driver_claude.compactar([f"A\n\n{largo}\n\nTítulo: 1", f"B\n\n{largo}\n\nTítulo: 2", "C corta"])
 assert len(com) == 1 and largo not in cs[0] and cs[2] == "C corta"
 (tmp / "c.md").write_text("# x\n\n" + "\n\n".join(f"## {k}\n\n{v}" for k, v in com.items()) + "\n")
 assert driver_claude.expandir(cs[1], tmp / "c.md") == f"B\n\n{largo}\n\nTítulo: 2"
+# celdas con «--» en una tabla: no se aceptan
+assert bg.filas_repetidas(r"\begin{tabular}{lrr} A & 1 & 2 \\ B & 3 & -- \\ \end{tabular}")
 # índice de tablas con el inventario de la lectura: sin «encabezados: Encabezados:»
 idx = bg.indice_tablas({"tab1": "Table 1 (pág. 3): t\nEncabezados: a | b\nCompara: x, y\nMide: z"})
 assert "encabezados: Encabezados" not in idx and "Compara: x, y" in idx

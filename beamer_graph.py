@@ -748,6 +748,10 @@ def filas_repetidas(body: str) -> list[str]:
             if len(cells) > 1 and all(re.fullmatch(r"\s*(?:--+|—|-|n/?a|)\s*", c) for c in cells[1:]):
                 errs.append(f"La fila '{name}' no tiene datos: omítela en vez de rellenarla con guiones")
                 continue
+            vacias = [c for c in cells[1:] if re.fullmatch(r"\s*(?:--+|—|–)\s*", c)]
+            if vacias and len(cells) > 1:
+                errs.append(f"La fila '{name}' tiene celdas con guiones: pon el dato de la fuente, "
+                            "déjala sin esa columna o quita la fila; no rellenes con «--»")
             if len(nums) < 2:
                 continue
             if nums in seen:
@@ -1075,6 +1079,10 @@ def ingest(state: State) -> dict:
             chunks[f"fig{n}"] = (f"Figure {n} (pág. {f['pagina']}): {pie_corto(f['caption'])}\n"
                                  f"[archivo: {f['archivo']}]")
         out["figuras_dir"] = str(dest)
+        import pymupdf
+        with pymupdf.open(path) as doc:          # capa de texto plana: la extracción en markdown
+            plano = "\n".join(pg.get_text() for pg in doc)   # trunca celdas de tablas rotadas
+        out["texto"] = text + "\n\n" + plano     # (se usa para validar la lectura y las cifras)
     return out
 
 
