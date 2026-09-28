@@ -1,7 +1,8 @@
 # Reglas de estilo para las diapositivas.
 #
 # [guia]    Texto libre, no se verifica automáticamente. `texto` lo reciben el guion
-#           y cada diapo; `guion`, solo el guion (estructura y reparto del contenido).
+#           y cada diapo; `guion`, solo el guion (estructura y reparto del contenido);
+#           `notas`, solo las notas del expositor (--notas).
 # [limites] Reglas medibles. Se verifican en código sobre cada frame; si alguna
 #           falla, la diapo vuelve a refinarse. Si tras los intentos sigue
 #           fallando pero compila, se conserva y queda como aviso en el informe.
@@ -34,6 +35,16 @@ guion = '''
   referencias, luego variantes y análisis adicionales; aportes y trabajo futuro.
 - Los detalles de implementación (casos borde, fallbacks) van como una línea
   dentro de la diapositiva del algoritmo, no en una diapositiva propia.
+'''
+
+# Solo para las notas del expositor (--notas): lo que dice quien presenta.
+notas = '''
+- Unas 80 a 130 palabras por diapositiva (alrededor de un minuto hablando); si las
+  instrucciones dan la duración de la charla, reparte el tiempo según el peso de cada
+  diapositiva.
+- Tono oral y directo, en primera persona del plural ("vemos", "proponemos").
+- Termina con una frase que lleve a la diapositiva siguiente cuando haya continuidad.
+- En tablas y figuras, di qué mirar primero (la fila o el valor que sostiene el mensaje).
 '''
 
 [limites]

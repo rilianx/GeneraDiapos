@@ -490,11 +490,14 @@ def _titulo(slide, parrafos, texto_plano: str, fuentes: dict | None = None, late
 
 def exportar(frames: list[tuple[str, str]], outline: dict, destino: Path, *,
              plantilla: Path | None = None, figuras: Path | None = None,
-             pdf_beamer: Path | None = None, macros: str = "") -> Path:
-    """frames: [(kind, frame_latex)] en orden (incluye portada y agenda). Devuelve destino."""
+             pdf_beamer: Path | None = None, macros: str = "", notas: list[str] | None = None) -> Path:
+    """frames: [(kind, frame_latex)] en orden (incluye portada y agenda). notas: la del expositor
+    de cada frame (mismo orden; "" si no tiene), va al panel de notas. Devuelve destino."""
+    notas = notas or [""] * len(frames)
     prs = Presentation(str(plantilla or DEFAULT_PLANTILLA))
     sldnum = _slide_num_xml(prs)
     contenido = [(k, f) for k, f in frames if k not in ("title", "agenda")]
+    notas_contenido = [n for (k, _), n in zip(frames, notas) if k not in ("title", "agenda")]
 
     # 1. piezas de cada frame y una sola llamada a pandoc para todo el texto
     textos: list[str] = []
@@ -537,6 +540,9 @@ def exportar(frames: list[tuple[str, str]], outline: dict, destino: Path, *,
                             r.set("b", "1" if k == 0 else "0")
                         txb.append(p)
                 break
+        nota_portada = next((n for (k, _), n in zip(frames, notas) if k == "title"), "")
+        if nota_portada:
+            _nota(portada, nota_portada)
 
     # 3. agenda
     rast = _Raster(pdf_beamer)
@@ -552,8 +558,10 @@ def exportar(frames: list[tuple[str, str]], outline: dict, destino: Path, *,
 
     # 4. diapositivas de contenido
     pendientes = []
-    for kind, titulo, idt, pzs, frame in plan:
+    for (kind, titulo, idt, pzs, frame), nota in zip(plan, notas_contenido):
         s = _nueva(prs, sldnum)
+        if nota:
+            _nota(s, nota)
         fuentes: dict = {}
         y0 = _titulo(s, par[idt], _texto_plano(titulo), fuentes, titulo)
         x, _, w, _ = CUERPO
@@ -572,6 +580,15 @@ def exportar(frames: list[tuple[str, str]], outline: dict, destino: Path, *,
     destino.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(destino))
     return destino
+
+
+def _nota(slide, texto: str) -> None:
+    """Notas del expositor en el panel de notas (un párrafo por párrafo del texto)."""
+    tf = slide.notes_slide.notes_text_frame
+    parrafos = [p.strip() for p in texto.split("\n\n") if p.strip()] or [texto]
+    tf.text = parrafos[0]
+    for t in parrafos[1:]:
+        tf.add_paragraph().text = t
 
 
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"

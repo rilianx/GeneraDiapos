@@ -14,6 +14,8 @@ python beamer_graph.py papers/<nombre>.pdf --claude trabajo/<nombre> --out prese
 
 En ese primer comando, según lo que pida el usuario:
 - PowerPoint (.pptx): `--pptx`.
+- Guion o notas para quien expone: `--notas` (van a `notas.md` y, con `--pptx`, a las notas
+  de cada diapositiva).
 - Otros archivos (otro paper, notas): `--extra ARCHIVO`, uno por archivo.
 - Indicaciones para la presentación (público, duración, énfasis, idioma, secciones):
   `--instrucciones "…"` con sus palabras, o `--instrucciones archivo` si las dio en un archivo.

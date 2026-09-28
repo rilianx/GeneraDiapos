@@ -18,7 +18,7 @@ from pathlib import Path
 
 ETIQUETAS = {"lectura": "Lectura del paper", "guion": "Guion", "revision-guion": "Revisión del guion",
              "escribir-diapo": "Escribir diapos", "corregir-diapo": "Corregir diapos",
-             "revisar-afirmaciones": "Revisar afirmaciones"}
+             "revisar-afirmaciones": "Revisar afirmaciones", "notas-expositor": "Notas del expositor"}
 
 
 def turnos(transcript: Path) -> list[dict]:

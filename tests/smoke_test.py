@@ -41,6 +41,16 @@ def fake_structured(model, schema, prompt, effort=None):
         return bg.Lectura(tablas=[], algoritmos=[], secciones=[], ecuaciones=[
             bg.ElementoLeido(id="eq1", pagina=1, titulo="Lagrangiano",
                              latex=r"L(x,\lambda)=f(x)+\sum_j \lambda_j g_j(x)")])
+    if schema is bg.Notas:                             # 1er intento: falta una y otra trae LaTeX
+        calls["notas_prompt"] = prompt
+        calls["notas"] = calls.get("notas", 0) + 1
+        if calls["notas"] == 1:
+            return bg.Notas(notas=[bg.NotaDiapo(diapo=0, texto="Hoy presentamos $x$."),
+                                   bg.NotaDiapo(diapo=2, texto="El método.")])
+        return bg.Notas(notas=[
+            bg.NotaDiapo(diapo=0, texto="Hoy presentamos un método de optimización."),
+            bg.NotaDiapo(diapo=2, texto="El lagrangiano junta objetivo y restricciones: 100% de_ellas {x}."),
+            bg.NotaDiapo(diapo=3, texto="Mejora 1.43 veces.\n\nEn 777 casos, lo que no dice el paper.")])
     if schema is bg.Review:                            # revisor: marca la cifra 99.9, que no está en la fuente
         calls["review"] += 1
         bad = "99.9" in prompt.split("CONTEXTO:")[0]
@@ -89,7 +99,7 @@ cfg = {"configurable": {"thread_id": "t"}, "max_concurrency": 2}
 (tmp / "notas.txt").write_text("El autor quiere destacar que lsmear no requiere modificar el contractor.")
 res = graph.invoke({"source_path": str(tmp / "paper.tex"), "out_dir": str(out),
                     "human_review": True, "pptx": str(Path(bg.__file__).with_name("plantilla.pptx")),
-                    "extras": [str(tmp / "notas.txt")],
+                    "extras": [str(tmp / "notas.txt")], "notas_expositor": True,
                     "instrucciones": "Público: estudiantes de pregrado; 10 minutos."}, cfg)
 assert "__interrupt__" in res, "debía pausar para revisión"
 edited = res["__interrupt__"][0].value["outline"]
@@ -136,6 +146,28 @@ assert "Método" in xml and "PowerPoint: `presentacion.pptx`" in (out / "informe
 apx = bg.tex_a_pptx(out / "presentacion.tex")
 with zipfile.ZipFile(apx) as z:
     assert len([n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)]) == n_frames
+    notas_apx = "".join(z.read(n).decode() for n in z.namelist() if n.startswith("ppt/notesSlides/notesSlide"))
+# Notas del expositor: se reintenta si falta una o trae LaTeX; salen en notas.md, \note{} y el .pptx
+assert calls["notas"] == 2 and "falta la nota de la diapositiva [3]" in calls["notas_prompt"]
+assert "trae LaTeX ($x$)" in calls["notas_prompt"] and "[1]" not in calls["notas_prompt"]   # sin agenda
+assert "Portada: Demo (A. Autor; Revista)" in calls["notas_prompt"] and "Unas 80 a 130" in calls["notas_prompt"]
+assert "estudiantes de pregrado" in calls["notas_prompt"]
+nmd = (out / "notas.md").read_text()
+assert "## 0. Portada" in nmd and "## 3. Resultados" in nmd and "1.43 veces" in nmd
+assert r"\note{El lagrangiano junta objetivo y restricciones: 100\% de\_ellas \{x\}.}" in tex
+errs_n, _ = bg.compile_tex(tex, passes=2, ignore_vbox=True, figuras=res.get("figuras_dir"))     # con las notas sigue compilando
+assert not errs_n, errs_n
+inf = (out / "informe.md").read_text()
+assert "Notas del expositor: `notas.md` (3 diapositivas" in inf and "Nota de la diapo 3: Cifra 777" in inf
+with zipfile.ZipFile(pptx_f) as z:
+    notas_px = "".join(z.read(n).decode() for n in z.namelist() if n.startswith("ppt/notesSlides/notesSlide"))
+for t in ("Hoy presentamos un método", "100% de_ellas {x}", "En 777 casos"):
+    assert t in notas_px and t in notas_apx, t
+assert bg.separar_nota(r"\begin{frame}{T}a\note{b \{c\} 5\%}\end{frame}") == \
+    ("\\begin{frame}{T}a\n\\end{frame}", "b {c} 5%")
+assert bg.tex_con_notas("x\\end{frame}", [0, 1], {"0": "n"}) == "x\\end{frame}"   # no calza: sin notas
+import driver_claude
+assert driver_claude.etiqueta({"esquema": "Notas", "prompt": ""}) == "notas-expositor"
 # Registro de errores de los validadores: \noexiste (compilación) queda anotado y en el informe
 cats = [r["categoria"] for r in bg.leer_errores()]
 assert "Error: Undefined control sequence (\\noexiste)" in cats, cats

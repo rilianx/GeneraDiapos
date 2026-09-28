@@ -495,6 +495,16 @@ class Review(BaseModel):
     claims: list[Claim]
 
 
+class NotaDiapo(BaseModel):
+    diapo: int = Field(description="número de la diapositiva, el que va entre corchetes")
+    texto: str = Field(description="lo que dice quien presenta, en texto plano (sin LaTeX)")
+
+
+class Notas(BaseModel):
+    """Guion del expositor: una nota por diapositiva."""
+    notas: list[NotaDiapo]
+
+
 class TablaLeida(BaseModel):
     numero: int
     pagina: int
@@ -550,6 +560,9 @@ class State(TypedDict, total=False):
     pptx: str               # plantilla .pptx: si está, también se exporta presentacion.pptx
     extras: list[str]       # fuentes adicionales (.pdf, .tex, .md, .txt): fragmentos x1…, x2…
     instrucciones: str      # instrucciones de quien presenta (texto libre)
+    notas_expositor: bool   # --notas: escribir el guion del expositor
+    notas: dict             # {str(idx): nota} de cada diapositiva
+    avisos_notas: list[str]
 
 
 class SlideState(TypedDict, total=False):
@@ -1027,10 +1040,19 @@ def soft_checks(frame: str, context: str) -> list[str]:
 # ----------------------------------------------------------------------------
 # Estilo
 # ----------------------------------------------------------------------------
+def _guia(path: str | None, clave: str) -> str:
+    p = Path(path or DEFAULT_STYLE)
+    return tomllib.loads(p.read_text()).get("guia", {}).get(clave, "").strip() if p.exists() else ""
+
+
 def guia_guion(path: str | None) -> str:
     """Reglas de [guia].guion: solo para el guion (estructura, reparto), no para cada diapo."""
-    p = Path(path or DEFAULT_STYLE)
-    return tomllib.loads(p.read_text()).get("guia", {}).get("guion", "").strip() if p.exists() else ""
+    return _guia(path, "guion")
+
+
+def guia_notas(path: str | None) -> str:
+    """Reglas de [guia].notas: solo para las notas del expositor."""
+    return _guia(path, "notas")
 
 
 def load_style(path: str | None) -> tuple[str, dict]:
@@ -1339,6 +1361,27 @@ incluir esas dos líneas).
 
 CUERPO:
 {body}"""
+
+NOTAS_PROMPT = """Escribe las notas del expositor de esta presentación Beamer: lo que dice quien \
+presenta en cada diapositiva. Devuelve una nota por cada diapositiva de abajo, con su número \
+(el que va entre corchetes).
+
+{instrucciones}\
+Reglas:
+- Texto plano, para leer en voz alta: sin LaTeX, sin viñetas y sin Markdown. Una fórmula se \
+dice con palabras.
+- Explica lo que muestra la diapositiva, no la leas: qué significa, por qué importa y cómo \
+se conecta con la anterior. Cifras, nombres y resultados: solo los que están en la diapositiva \
+(no agregues datos).
+- La nota de la portada presenta el tema en una o dos frases.
+
+Guía para las notas:
+{guide}
+
+Notación de la presentación: {notation}
+{feedback}
+DIAPOSITIVAS:
+{diapos}"""
 
 # ----------------------------------------------------------------------------
 # Utilidades de cabecera
@@ -1912,7 +1955,7 @@ def compile_full(state: State) -> dict:
 def route_full(state: State) -> str:
     if state["log_errors"] and state["global_attempts"] < MAX_GLOBAL_ATTEMPTS:
         return "refine_global"
-    return "write_outputs"
+    return "notas_expositor"
 
 
 def refine_global(state: State) -> dict:
@@ -1922,6 +1965,120 @@ def refine_global(state: State) -> dict:
         errors="\n".join(state["log_errors"]), body=body))
     new_body = re.sub(r"\\(begin|end)\{document\}", "", new_body)
     return {"tex": head + new_body + tail, "global_attempts": state["global_attempts"] + 1}
+
+
+MAX_NOTAS_ATTEMPTS = 2
+
+
+def diapos_con_nota(state: State) -> list[tuple[int, str]]:
+    """(idx, frame) de las diapos que llevan nota: todas menos la agenda y las que no compilaron."""
+    slides = state["outline"]["slides"]
+    return [(idx, frame) for idx, frame, status, _, _ in sorted(state["frames"], key=lambda f: f[0])
+            if status != "failed" and slides[idx]["kind"] != "agenda"]
+
+
+def validar_notas(n: Notas, esperadas: list[int]) -> list[str]:
+    dadas = {x.diapo: x.texto.strip() for x in n.notas}
+    errs = [f"falta la nota de la diapositiva [{i}]" for i in esperadas if not dadas.get(i)]
+    errs += [f"no hay diapositiva [{i}]" for i in dadas if i not in esperadas]
+    errs += [f"la nota de [{i}] trae LaTeX ({m.group(0)}): escríbela en texto plano"
+             for i, t in dadas.items() if i in esperadas
+             for m in [re.search(r"\\[A-Za-z]+|\$[^$]+\$", t)] if m]
+    return errs
+
+
+def notas_expositor(state: State) -> dict:
+    """--notas: el guion de quien presenta, una nota por diapo, a partir de los frames finales.
+    No toca las diapos; las notas van a notas.md, a \\note{} en el .tex y a las notas del .pptx."""
+    if not state.get("notas_expositor"):
+        return {}
+    diapos = diapos_con_nota(state)
+    esperadas = [i for i, _ in diapos]
+    o = state["outline"]
+    listado = "\n\n".join(f"[{i}]\n" + (f"Portada: {o['title']} ({o['authors']}; {o['venue']})"
+                                          if o["slides"][i]["kind"] == "title" else fr) for i, fr in diapos)
+    feedback, n = "", Notas(notas=[])
+    for _ in range(MAX_NOTAS_ATTEMPTS):
+        n = call_structured(MODEL_SLIDES, Notas, NOTAS_PROMPT.format(
+            instrucciones=bloque_instrucciones(state), guide=guia_notas(state.get("style_path")) or "-",
+            notation=o.get("notation", "-"), feedback=feedback, diapos=listado))
+        errs = validar_notas(n, esperadas)
+        if not errs:
+            break
+        feedback = "\nCORRIGE estos problemas del intento anterior:\n- " + "\n- ".join(errs) + "\n"
+    notas = {str(x.diapo): x.texto.strip() for x in n.notas
+             if x.diapo in esperadas and x.texto.strip()}
+    # cifras que no están en su diapo ni en las fuentes: aviso, como en las diapos
+    fuentes = state.get("texto") or "\n".join(state.get("chunks", {}).values())
+    frames = dict(diapos)
+    avisos = [f"Nota de la diapo {i}: {w}" for i, t in notas.items()
+              for w in soft_checks(t, frames[int(i)] + "\n" + fuentes) if w.startswith("Cifra")]
+    avisos += [f"Nota de la diapo {i}: falta" for i in esperadas if str(i) not in notas]
+    return {"notas": notas, "avisos_notas": avisos}
+
+
+def nota_a_latex(t: str) -> str:
+    """Texto plano → argumento de \\note{} (se escapan los caracteres especiales de LaTeX)."""
+    esp = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_",
+           "{": r"\{", "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
+    return "".join(esp.get(c, c) for c in t)
+
+
+def nota_desde_latex(t: str) -> str:
+    for a, b in ((r"\textbackslash{}", "\\"), (r"\textasciitilde{}", "~"), (r"\textasciicircum{}", "^")):
+        t = t.replace(a, b)
+    return re.sub(r"\\([&%$#_{}])", r"\1", t).strip()
+
+
+def separar_nota(frame: str) -> tuple[str, str]:
+    """frame con \\note{…} → (frame sin la nota, texto de la nota)."""
+    m = re.search(r"\\note\s*\{", frame)
+    if not m:
+        return frame, ""
+    depth, j = 1, m.end()
+    while j < len(frame):
+        if frame[j] == "\\":                     # \{ \} \\ escapados: no cuentan
+            j += 2
+            continue
+        depth += {"{": 1, "}": -1}.get(frame[j], 0)
+        if depth == 0:
+            return (frame[:m.start()].rstrip() + "\n" + frame[j + 1:].lstrip(),
+                    nota_desde_latex(frame[m.end():j]))
+        j += 1
+    return frame, ""
+
+
+def tex_con_notas(tex: str, idxs: list[int], notas: dict) -> str:
+    """Agrega \\note{} al final de cada frame del cuerpo (idxs: el idx de cada frame, en orden).
+    Beamer no muestra las notas salvo que la base lo pida (\\setbeameroption{show notes})."""
+    frames = list(re.finditer(r"\\end\{frame\}", tex))
+    if not notas or len(frames) != len(idxs):
+        return tex
+    out, prev = [], 0
+    for m, idx in zip(frames, idxs):
+        out.append(tex[prev:m.start()])
+        if notas.get(str(idx)):
+            out.append(f"\\note{{{nota_a_latex(notas[str(idx)])}}}\n")
+        prev = m.start()
+    return "".join(out) + tex[prev:]
+
+
+def notas_md(state: State) -> str:
+    slides, notas = state["outline"]["slides"], state.get("notas", {})
+    out = [f"# Notas del expositor: {_texto_titulo(state['outline'].get('title', ''))}\n"]
+    for idx, frame in diapos_con_nota(state):
+        if str(idx) in notas:
+            titulo = titulo_frame(frame) or slides[idx]["title"]
+            out.append(f"## {idx}. {_texto_titulo(titulo) if slides[idx]['kind'] != 'title' else 'Portada'}\n\n"
+                       f"{notas[str(idx)]}\n")
+    return "\n".join(out)
+
+
+def _texto_titulo(t: str) -> str:
+    """Título LaTeX legible en Markdown (sin comandos ni llaves)."""
+    t = re.sub(r"\\(?:alert|textbf|emph|texttt|textit)\{([^{}]*)\}", r"\1", t)
+    t = re.sub(r"\\[A-Za-z]+\*?", "", t)
+    return " ".join(t.replace("{", "").replace("}", "").replace("~", " ").split())
 
 
 def informe_uso() -> list[str]:
@@ -1956,8 +2113,9 @@ def exportar_pptx(state: State, out: Path) -> str:
     """presentacion.pptx a partir de los frames finales (ver pptx_export). Un fallo no detiene el
     pipeline: el PDF de Beamer ya está y el informe dice qué pasó."""
     slides = state["outline"]["slides"]
-    frames = []
+    frames, notas = [], []
     for idx, frame, status, _, _ in sorted(state["frames"], key=lambda f: f[0]):
+        notas.append((state.get("notas") or {}).get(str(idx), ""))
         if status == "failed":
             frame = f"\\begin{{frame}}{{{slides[idx]['title']}}}\nDiapositiva pendiente de revisión\n\\end{{frame}}"
         frames.append((slides[idx]["kind"], expandir_diagramas(frame, state.get("figuras_dir"))[0]))
@@ -1966,7 +2124,7 @@ def exportar_pptx(state: State, out: Path) -> str:
         destino = pptx_export.exportar(
             frames, state["outline"], out / "presentacion.pptx", plantilla=Path(state["pptx"]),
             figuras=Path(state["figuras_dir"]) if state.get("figuras_dir") else None,
-            pdf_beamer=out / "presentacion.pdf", macros=base_definiciones(load_base(state)))
+            pdf_beamer=out / "presentacion.pdf", macros=base_definiciones(load_base(state)), notas=notas)
         return (f"PowerPoint: `{destino.name}` (plantilla `{Path(state['pptx']).name}`; las fórmulas son "
                 "ecuaciones editables en PowerPoint; LibreOffice y Google Slides muestran una imagen)")
     except Exception as e:                       # noqa: BLE001
@@ -1976,7 +2134,11 @@ def exportar_pptx(state: State, out: Path) -> str:
 def write_outputs(state: State) -> dict:
     out = Path(state["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
-    (out / "presentacion.tex").write_text(state["tex"])
+    notas = state.get("notas") or {}
+    idxs = [f[0] for f in sorted(state["frames"], key=lambda f: f[0])]
+    (out / "presentacion.tex").write_text(tex_con_notas(state["tex"], idxs, notas))
+    if notas:
+        (out / "notas.md").write_text(notas_md(state))
     pdf = Path(state["pdf_path"])
     if pdf.exists():
         shutil.copy(pdf, out / "presentacion.pdf")
@@ -2004,6 +2166,11 @@ def write_outputs(state: State) -> dict:
         lines += [f"- {c} ({k})" for c, k in Counter(r["categoria"] for r in del_run).most_common()]
         lines.append(f"\nSe acumulan en `{ERRORES_LOG}`; los frecuentes se avisan en el prompt de las "
                      "próximas ejecuciones.")
+    if state.get("notas_expositor"):
+        lines.append(f"\nNotas del expositor: `notas.md` ({len(notas)} diapositivas; también como "
+                     "\\note{} en `presentacion.tex`" + (" y en las notas del .pptx" if state.get("pptx") else "")
+                     + ")")
+        lines += [f"- {w}" for w in state.get("avisos_notas", [])]
     if state.get("pptx"):
         lines.append("\n" + exportar_pptx(state, out))
     lines += informe_uso()
@@ -2142,6 +2309,7 @@ def build_graph(checkpointer=None):
     g.add_node("assemble", assemble)
     g.add_node("compile_full", compile_full)
     g.add_node("refine_global", refine_global)
+    g.add_node("notas_expositor", notas_expositor)
     g.add_node("write_outputs", write_outputs)
     g.add_edge(START, "ingest")
     g.add_edge("ingest", "lectura")
@@ -2150,8 +2318,9 @@ def build_graph(checkpointer=None):
     g.add_conditional_edges("review_outline", fan_out, ["slide"])
     g.add_edge("slide", "assemble")
     g.add_edge("assemble", "compile_full")
-    g.add_conditional_edges("compile_full", route_full, ["refine_global", "write_outputs"])
+    g.add_conditional_edges("compile_full", route_full, ["refine_global", "notas_expositor"])
     g.add_edge("refine_global", "compile_full")
+    g.add_edge("notas_expositor", "write_outputs")
     g.add_edge("write_outputs", END)
     return g.compile(checkpointer=checkpointer or MemorySaver())
 
@@ -2174,6 +2343,8 @@ def opciones_fuentes(args) -> dict:
             raise SystemExit(f"--extra: no existe {e}")
     if extras:
         out["extras"] = [str(Path(e)) for e in extras]
+    if getattr(args, "notas", False):
+        out["notas_expositor"] = True
     instr = leer_instrucciones(getattr(args, "instrucciones", None))
     if instr:
         out["instrucciones"] = instr
@@ -2190,12 +2361,13 @@ def tex_a_pptx(tex: Path, plantilla: str | None = None) -> Path:
     def campo(cmd: str) -> str:
         m = re.search(r"\\" + cmd + r"\{((?:[^{}]|\{[^{}]*\})*)\}", head)
         return m.group(1).strip() if m and "<<" not in m.group(1) else ""
-    frames, slides, sec = [], [], ""
+    frames, slides, notas, sec = [], [], [], ""
     for m in re.finditer(r"\\section\*?\{([^}]*)\}|\\begin\{frame\}.*?\\end\{frame\}", body, re.S):
         if m.group(1) is not None:
             sec = m.group(1)
             continue
-        fr = m.group(0)
+        fr, nota = separar_nota(m.group(0))
+        notas.append(nota)
         kind = "title" if "\\titlepage" in fr else "agenda" if "\\tableofcontents" in fr else "bullets"
         frames.append((kind, fr))
         slides.append({"kind": kind, "section": "" if kind in FIXED_KINDS else sec})
@@ -2208,11 +2380,11 @@ def tex_a_pptx(tex: Path, plantilla: str | None = None) -> Path:
         frames, outline, tex.with_suffix(".pptx"),
         plantilla=Path(plantilla) if plantilla else None,
         figuras=figuras if figuras.is_dir() else None,
-        pdf_beamer=tex.with_suffix(".pdf"), macros=base_definiciones(head))
+        pdf_beamer=tex.with_suffix(".pdf"), macros=base_definiciones(head), notas=notas)
 
 
 # Lo que genera el pipeline (solo esto se borra al empezar de nuevo; nunca la carpeta entera)
-GENERADOS_SALIDA = ["presentacion.tex", "presentacion.pdf", "presentacion.pptx", "informe.md",
+GENERADOS_SALIDA = ["presentacion.tex", "presentacion.pdf", "presentacion.pptx", "informe.md", "notas.md",
                     "outline.json", "outline_borrador.json", "figuras"]
 GENERADOS_TRABAJO = ["estado.sqlite", "estado.sqlite-wal", "estado.sqlite-shm", "meta.json",
                      "pendientes.json", "comun.md", "tiempos.jsonl", "guion.md", "guion.json",
@@ -2275,6 +2447,8 @@ def main() -> None:
                     help="exporta también presentacion.pptx (fórmulas editables) sobre la plantilla")
     ap.add_argument("--plantilla", default=None, metavar="PPTX",
                     help="plantilla de PowerPoint para --pptx (por defecto plantilla.pptx)")
+    ap.add_argument("--notas", action="store_true",
+                    help="escribe también las notas del expositor (notas.md, \\note{} y notas del .pptx)")
     ap.add_argument("--extra", action="append", default=[], metavar="ARCHIVO",
                     help="fuente adicional (.pdf, .tex, .md, .txt), p. ej. otro paper o notas; repetible")
     ap.add_argument("--instrucciones", metavar="TEXTO|ARCHIVO",
@@ -2341,7 +2515,7 @@ def main() -> None:
         result = graph.invoke(Command(resume=json.loads(path.read_text())), config)
 
     print("\n".join(informe_uso()))
-    extra = " y presentacion.pptx" if opciones_pptx(args) else ""
+    extra = (" y presentacion.pptx" if opciones_pptx(args) else "") + (" (notas en notas.md)" if args.notas else "")
     print(f"Listo: {args.out}/presentacion.pdf{extra} (ver {args.out}/informe.md)")
 
 

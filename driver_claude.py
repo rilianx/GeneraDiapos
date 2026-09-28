@@ -108,6 +108,8 @@ def etiqueta(p: dict) -> str:
         return "lectura"
     if p.get("esquema") == "Outline":
         return "guion"
+    if p.get("esquema") == "Notas":
+        return "notas-expositor"
     if p.get("esquema") == "Review":
         return "revisar-afirmaciones"
     if prompt.startswith("Escribe UNA diapositiva"):
