@@ -314,7 +314,8 @@ def run(args) -> int:
         meta = {"paper": args.source, "out": args.out}
         meta_f.write_text(json.dumps(meta, ensure_ascii=False))
         state = {"source_path": args.source, "base_path": args.base, "style_path": args.estilo,
-                 "out_dir": args.out, "extractor": args.extractor, "human_review": args.review}
+                 "out_dir": args.out, "extractor": args.extractor, "human_review": args.review,
+                 **bg.opciones_pptx(args)}
         if args.guion:
             state["outline_path"] = args.guion
         result = graph.invoke(state, cfg)

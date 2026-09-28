@@ -33,6 +33,9 @@ para el flujo completo y las decisiones de diseño.
 - LLM: `_chat`, `call_text`, `call_structured`
 - Extracción: `extract_text`, `chunk_document`, `extraer_figuras` (PNG por figura, fragmentos `fig*`)
 - LaTeX: `preflight`, `compile_tex`, `parse_log`, `lint_frame`, `soft_checks`
+- PowerPoint (`pptx_export.py`, `--pptx`): se deriva de los frames finales en `write_outputs`
+  (`exportar_pptx`); Beamer sigue siendo la fuente de verdad. pandoc solo traduce el texto y las
+  fórmulas (OMML en `mc:AlternateContent`, con fallback de imagen compilada con LaTeX).
 - Registro de errores: `registrar_errores` (desde `compile_slide`), `categoria_error`, `errores_previos`
   (aviso en `SLIDE_PROMPT`); archivo `ERRORES_LOG` (`BEAMER_ERRORES`)
 - Estilo: `load_style`, `guia_guion` (reglas solo del guion), `describe_limits`, `style_check`

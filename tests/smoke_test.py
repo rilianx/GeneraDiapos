@@ -85,7 +85,7 @@ out = tmp / "out"
 graph = bg.build_graph()
 cfg = {"configurable": {"thread_id": "t"}, "max_concurrency": 2}
 res = graph.invoke({"source_path": str(tmp / "paper.tex"), "out_dir": str(out),
-                    "human_review": True}, cfg)
+                    "human_review": True, "pptx": str(Path(bg.__file__).with_name("plantilla.pptx"))}, cfg)
 assert "__interrupt__" in res, "debía pausar para revisión"
 edited = res["__interrupt__"][0].value["outline"]
 assert [s["kind"] for s in edited["slides"]][:2] == ["title", "agenda"]   # portada y agenda
@@ -111,6 +111,17 @@ assert not res["log_errors"]
 tex = (out / "presentacion.tex").read_text()
 assert "\\tableofcontents" in tex and tex.index("\\section{Propuesta}") < tex.index("\\section{Experimentos}")
 assert calls["review"] > 0, "el revisor debía ejecutarse en las diapos que compilan"
+# PowerPoint: misma cantidad de diapos, la ecuación como OMML editable y un fallback con imagen
+import zipfile
+pptx_f = out / "presentacion.pptx"
+assert pptx_f.exists(), (out / "informe.md").read_text()
+with zipfile.ZipFile(pptx_f) as z:
+    diapos = [n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)]
+    xml = "".join(z.read(n).decode() for n in diapos)
+n_frames = len(res["outline"]["slides"])
+assert len(diapos) == n_frames, (len(diapos), n_frames)
+assert "<a14:m>" in xml and "oMath" in xml and "mc:Fallback" in xml and "<p:pic>" in xml
+assert "Método" in xml and "PowerPoint: `presentacion.pptx`" in (out / "informe.md").read_text()
 # Registro de errores de los validadores: \noexiste (compilación) queda anotado y en el informe
 cats = [r["categoria"] for r in bg.leer_errores()]
 assert "Error: Undefined control sequence (\\noexiste)" in cats, cats

@@ -5,3 +5,5 @@ pydantic>=2
 langgraph-checkpoint-sqlite>=3   # modo Claude Code (estado entre ejecuciones)
 pymupdf4llm
 # opcional, mejor con ecuaciones: marker-pdf
+python-pptx>=1.0          # --pptx
+pypandoc_binary>=1.13     # --pptx: pandoc para las fórmulas (OMML)

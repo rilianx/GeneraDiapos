@@ -287,6 +287,7 @@ class State(TypedDict, total=False):
     global_attempts: int
     pdf_path: str
     inicio: float           # cuándo empezó la ejecución (para el resumen de errores del informe)
+    pptx: str               # plantilla .pptx: si está, también se exporta presentacion.pptx
 
 
 class SlideState(TypedDict, total=False):
@@ -1091,6 +1092,12 @@ def base_files(base: str) -> list[str]:
     return files + [f"{p}.sty" for p in base_packages(base)]
 
 
+def base_definiciones(base: str) -> str:
+    """Las definiciones de macros de la base tal cual (para compilar o convertir fuera de Beamer)."""
+    return "\n".join(l for l in base.splitlines()
+                     if re.match(r"\s*\\(newcommand|renewcommand|providecommand|DeclareMathOperator)", l))
+
+
 def base_macros(base: str) -> str:
     """Lista legible de las macros definidas en la base, para informárselas al modelo."""
     out = []
@@ -1616,6 +1623,27 @@ def titulo_frame(frame: str) -> str:
     return ""
 
 
+def exportar_pptx(state: State, out: Path) -> str:
+    """presentacion.pptx a partir de los frames finales (ver pptx_export). Un fallo no detiene el
+    pipeline: el PDF de Beamer ya está y el informe dice qué pasó."""
+    slides = state["outline"]["slides"]
+    frames = []
+    for idx, frame, status, _, _ in sorted(state["frames"], key=lambda f: f[0]):
+        if status == "failed":
+            frame = f"\\begin{{frame}}{{{slides[idx]['title']}}}\nDiapositiva pendiente de revisión\n\\end{{frame}}"
+        frames.append((slides[idx]["kind"], frame))
+    try:
+        import pptx_export
+        destino = pptx_export.exportar(
+            frames, state["outline"], out / "presentacion.pptx", plantilla=Path(state["pptx"]),
+            figuras=Path(state["figuras_dir"]) if state.get("figuras_dir") else None,
+            pdf_beamer=out / "presentacion.pdf", macros=base_definiciones(load_base(state)))
+        return (f"PowerPoint: `{destino.name}` (plantilla `{Path(state['pptx']).name}`; las fórmulas son "
+                "ecuaciones editables en PowerPoint; LibreOffice y Google Slides muestran una imagen)")
+    except Exception as e:                       # noqa: BLE001
+        return f"PowerPoint: no se pudo generar ({type(e).__name__}: {e})"
+
+
 def write_outputs(state: State) -> dict:
     out = Path(state["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
@@ -1647,6 +1675,8 @@ def write_outputs(state: State) -> dict:
         lines += [f"- {c} ({k})" for c, k in Counter(r["categoria"] for r in del_run).most_common()]
         lines.append(f"\nSe acumulan en `{ERRORES_LOG}`; los frecuentes se avisan en el prompt de las "
                      "próximas ejecuciones.")
+    if state.get("pptx"):
+        lines.append("\n" + exportar_pptx(state, out))
     lines += informe_uso()
     (out / "informe.md").write_text("\n".join(lines) + "\n")
     return {}
@@ -1795,6 +1825,13 @@ def build_graph(checkpointer=None):
 # ----------------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------------
+def opciones_pptx(args) -> dict:
+    if not (getattr(args, "pptx", False) or getattr(args, "plantilla", None)):
+        return {}
+    import pptx_export
+    return {"pptx": str(args.plantilla or pptx_export.DEFAULT_PLANTILLA)}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("source", nargs="?", help="paper en .pdf, .tex o .md (con --guion, opcional)")
@@ -1810,6 +1847,10 @@ def main() -> None:
     ap.add_argument("--claude", metavar="DIR",
                     help="modo Claude Code (LLM_PROVIDER=claude): estado y tareas en DIR; "
                          "vuelve a ejecutar con --claude DIR para continuar")
+    ap.add_argument("--pptx", action="store_true",
+                    help="exporta también presentacion.pptx (fórmulas editables) sobre la plantilla")
+    ap.add_argument("--plantilla", default=None, metavar="PPTX",
+                    help="plantilla de PowerPoint para --pptx (por defecto plantilla.pptx)")
     ap.add_argument("--resumen-errores", nargs="?", const="", metavar="JSONL",
                     help="resume el registro de errores de los validadores (por defecto "
                          "errores_validacion.jsonl) y termina")
@@ -1851,7 +1892,8 @@ def main() -> None:
     config = {"configurable": {"thread_id": "beamer"}, "max_concurrency": args.concurrency}
     result = graph.invoke({"source_path": args.source, "base_path": args.base, "style_path": args.estilo,
                            "out_dir": args.out, **({"outline_path": args.guion} if args.guion else {}),
-                           "extractor": args.extractor, "human_review": args.review}, config)
+                           "extractor": args.extractor, "human_review": args.review,
+                           **opciones_pptx(args)}, config)
 
     while "__interrupt__" in result:
         path = Path(args.out) / "outline_borrador.json"
@@ -1862,7 +1904,8 @@ def main() -> None:
         result = graph.invoke(Command(resume=json.loads(path.read_text())), config)
 
     print("\n".join(informe_uso()))
-    print(f"Listo: {args.out}/presentacion.pdf (ver {args.out}/informe.md)")
+    extra = " y presentacion.pptx" if opciones_pptx(args) else ""
+    print(f"Listo: {args.out}/presentacion.pdf{extra} (ver {args.out}/informe.md)")
 
 
 if __name__ == "__main__":

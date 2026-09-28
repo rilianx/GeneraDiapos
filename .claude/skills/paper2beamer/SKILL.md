@@ -12,6 +12,8 @@ Usa `.venv/bin/python` si existe (dependencias en un entorno virtual); si no, `p
 python beamer_graph.py papers/<nombre>.pdf --claude trabajo/<nombre> --out presentaciones/<nombre> --review
 ```
 
+Si piden PowerPoint (.pptx), agrega `--pptx` a ese primer comando.
+
 Luego, hasta que diga «Listo»:
 1. Lee cada archivo de `trabajo/<nombre>/tareas/` (y una vez `trabajo/<nombre>/comun.md`,
    con los bloques que citan) y escribe la respuesta donde indica.
