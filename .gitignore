@@ -9,3 +9,4 @@ salida/
 *.out
 *.snm
 *.toc
+errores_validacion.jsonl

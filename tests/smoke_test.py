@@ -7,6 +7,9 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import os
+REGISTRO = Path(tempfile.mkdtemp()) / "errores.jsonl"      # no ensuciar el registro real
+os.environ["BEAMER_ERRORES"] = str(REGISTRO)
 
 from langgraph.types import Command
 
@@ -108,6 +111,13 @@ assert not res["log_errors"]
 tex = (out / "presentacion.tex").read_text()
 assert "\\tableofcontents" in tex and tex.index("\\section{Propuesta}") < tex.index("\\section{Experimentos}")
 assert calls["review"] > 0, "el revisor debía ejecutarse en las diapos que compilan"
+# Registro de errores de los validadores: \noexiste (compilación) queda anotado y en el informe
+cats = [r["categoria"] for r in bg.leer_errores()]
+assert "Error: Undefined control sequence (\\noexiste)" in cats, cats
+assert "Errores que detectaron los validadores" in (out / "informe.md").read_text()
+assert bg.errores_previos() == ""                       # visto una sola vez: aún no se avisa
+bg.registrar_errores("compilación", "equation", ["Error: Undefined control sequence. contexto: \\noexiste"])
+assert "Undefined control sequence (\\noexiste) (2 veces)" in bg.errores_previos()
 # Tipos de diapo: el guion debe respetar fuentes y variedad; el frame, su formato
 spec = lambda k, src: bg.SlideSpec(title="T", bullets=["x"], kind=k, sources=src, section="Propuesta")
 chunks = {"sec1": "", "tab1": "", "eq1": ""}
@@ -257,6 +267,8 @@ assert (work / "guion.md").exists() and rounds >= 4      # lectura, guion, revis
 # interrupt) y el driver debe reanudar bien, no declarar «Listo» sin hacer nada
 assert calls["lectura"] == 2
 assert comunes > 0, "las reglas repetidas entre tareas debían ir a comun.md"
+assert "Errores que los validadores detectaron" in calls["write"]["Método"], \
+    "los errores frecuentes de ejecuciones anteriores debían avisarse en el prompt"
 assert guion_invalido_visto, "un guion.md mal editado debía rechazarse con un mensaje para la persona"
 inf = (tmp / "out_claude" / "informe.md").read_text()      # tiempos por ronda en el informe
 assert "## Tiempos (modo Claude)" in inf and "revisión humana del guion" in inf and "1 lectura" in inf

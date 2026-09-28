@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import tomllib
 from pathlib import Path
 from typing import Annotated, TypedDict
@@ -71,6 +72,12 @@ N_SLIDES = (12, 16)
 
 DEFAULT_BASE = Path(__file__).with_name("base.tex")
 DEFAULT_STYLE = Path(__file__).with_name("estilo.toml")
+# Registro persistente de lo que rechazan los validadores (compilación, lint, formato, estilo):
+# los errores más frecuentes se avisan en el prompt de las diapos de las próximas ejecuciones.
+# BEAMER_ERRORES=ruta para otro archivo; BEAMER_ERRORES=off para desactivarlo.
+ERRORES_LOG = os.environ.get("BEAMER_ERRORES") or str(Path(__file__).with_name("errores_validacion.jsonl"))
+MAX_ERRORES_PREVIOS = 6              # categorías que se avisan en el prompt
+MIN_VECES_PREVIOS = 2                # veces que debe haberse visto una categoría para avisarla
 STYLE_DEFAULTS = {
     "max_items": 6, "max_palabras_item": 18, "max_anidamiento": 2,
     "max_caracteres_titulo": 60, "max_alerts": 2, "max_negritas": 3,
@@ -279,6 +286,7 @@ class State(TypedDict, total=False):
     log_errors: list[str]
     global_attempts: int
     pdf_path: str
+    inicio: float           # cuándo empezó la ejecución (para el resumen de errores del informe)
 
 
 class SlideState(TypedDict, total=False):
@@ -295,7 +303,9 @@ class SlideState(TypedDict, total=False):
     context_cifras: str     # modo claude: capa de texto completa para el chequeo de cifras
     figuras_dir: str
     tables: str             # índice de todas las tablas (título y encabezados)
-    plan: str               # títulos del guion completo, con esta diapo marcada
+    plan: str               # títulos del guion completo
+    previos: str            # errores frecuentes de ejecuciones anteriores (aviso en el prompt)
+    paper: str
     style_errors: list[str]
     fact_errors: list[str]  # afirmaciones que el revisor no encontró respaldadas
     reviews: int            # revisiones hechas (presupuesto propio, no gasta attempts)
@@ -649,6 +659,58 @@ def _norm_numbers(s: str) -> str:
     return re.sub(r"(?<=\d)[ ,](?=\d{3}\b)", "", s)
 
 
+def categoria_error(msg: str) -> str:
+    """Normaliza un mensaje de validador para agrupar los del mismo tipo entre ejecuciones:
+    sin líneas, contexto ni números concretos, pero con la macro culpable si la hay."""
+    macro = re.findall(r"\\[A-Za-z@]+", msg.split("contexto:", 1)[1]) if "contexto:" in msg else []
+    t = re.split(r" \(línea | contexto:", msg)[0].strip()
+    if macro and "Undefined control sequence" in t:
+        t = t.rstrip(".") + f" ({macro[-1]})"
+    t = re.sub(r"'[^']*'|«[^»]*»", "…", t)
+    return re.sub(r"\d+(?:\.\d+)?", "N", t)
+
+
+def registrar_errores(tipo: str, kind: str, msgs: list[str], paper: str = "") -> None:
+    """Agrega al registro persistente lo que rechazó un validador (una línea JSON por error)."""
+    if not msgs or ERRORES_LOG == "off":
+        return
+    ahora = time.time()
+    lineas = "".join(json.dumps({"ts": ahora, "paper": Path(paper).name, "tipo": tipo, "kind": kind,
+                                 "categoria": categoria_error(m), "mensaje": m[:300]},
+                                ensure_ascii=False) + "\n" for m in msgs)
+    try:
+        with open(ERRORES_LOG, "a") as f:      # escrituras cortas en modo append: seguras en paralelo
+            f.write(lineas)
+    except OSError:
+        pass                                   # el registro nunca debe frenar la generación
+
+
+def leer_errores(desde: float = 0.0) -> list[dict]:
+    p = Path(ERRORES_LOG)
+    if ERRORES_LOG == "off" or not p.exists():
+        return []
+    out = []
+    for l in p.read_text().splitlines():
+        try:
+            r = json.loads(l)
+        except json.JSONDecodeError:
+            continue
+        if r.get("ts", 0) >= desde:
+            out.append(r)
+    return out
+
+
+def errores_previos(n: int = MAX_ERRORES_PREVIOS, min_veces: int = MIN_VECES_PREVIOS) -> str:
+    """Párrafo para el prompt con las categorías de error más frecuentes; "" si no hay."""
+    from collections import Counter
+    cuenta = Counter(r["categoria"] for r in leer_errores())
+    top = [(c, k) for c, k in cuenta.most_common(n) if k >= min_veces]
+    if not top:
+        return ""
+    return ("Errores que los validadores detectaron en diapositivas de ejecuciones anteriores "
+            "(evítalos desde el primer intento):\n" + "\n".join(f"- {c} ({k} veces)" for c, k in top))
+
+
 def soft_checks(frame: str, context: str) -> list[str]:
     """Avisos que no bloquean: densidad y cifras que no aparecen en las fuentes."""
     warns = []
@@ -884,7 +946,7 @@ cubren las demás diapos del guion completo:
 
 {plan}
 
-Título: {title}
+{previos}Título: {title}
 Contenido a cubrir (ideas y datos, no viñetas literales):
 {bullets}
 {aviso}
@@ -1071,7 +1133,7 @@ def ingest(state: State) -> dict:
     chunks = chunk_document(text, fmt)
     if not chunks:
         raise RuntimeError("No se pudo extraer texto del documento")
-    out = {"chunks": chunks, "texto": text}
+    out = {"chunks": chunks, "texto": text, "inicio": time.time()}
     path = Path(state["source_path"])
     if path.suffix == ".pdf":
         dest = (Path(state["out_dir"]) if state.get("out_dir") else Path(tempfile.mkdtemp())) / "figuras"
@@ -1440,6 +1502,7 @@ def fan_out(state: State) -> list[Send]:
     base = load_base(state)
     macros, packages = base_macros(base), ", ".join(base_packages(base))
     guide, lim = load_style(state.get("style_path"))
+    previos = errores_previos()
     return [Send("slide", {
         "idx": i, "spec": s, "head": state["head"], "notation": o["notation"],
         "macros": macros, "packages": packages, "style_guide": guide or "-", "limits": lim, "context": (fuentes_claude(chunks, s["sources"]) if PROVIDER == "claude"
@@ -1448,6 +1511,7 @@ def fan_out(state: State) -> list[Send]:
         "damaged": [c for c in s["sources"] if TABLA_DANADA in chunks[c]],
         "figuras_dir": state.get("figuras_dir", ""),
         "tables": indice_tablas(chunks), "plan": plan_guion(o["slides"]),
+        "previos": previos, "paper": state.get("source_path", ""),
         "attempts": 0, "errors": [], "style_errors": [], "fact_errors": [], "reviews": 0, "best_frame": "",
         "warnings": [],
     }) for i, s in enumerate(o["slides"])]
@@ -1542,6 +1606,14 @@ def write_outputs(state: State) -> dict:
                  or state["outline"]["slides"][idx]["title"]).replace("|", "/")
         warns = [" ".join(w.replace("|", "/").split()) for w in warns]   # una celda de tabla md
         lines.append(f"| {idx} | {title} | {status} | {attempts} | {'<br>'.join(warns) or '-'} |")
+    del_run = [r for r in leer_errores(state.get("inicio", time.time()))
+               if r.get("paper") == Path(state.get("source_path", "")).name]
+    if del_run:
+        from collections import Counter
+        lines.append("\n## Errores que detectaron los validadores (y se corrigieron o quedaron como aviso)\n")
+        lines += [f"- {c} ({k})" for c, k in Counter(r["categoria"] for r in del_run).most_common()]
+        lines.append(f"\nSe acumulan en `{ERRORES_LOG}`; los frecuentes se avisan en el prompt de las "
+                     "próximas ejecuciones.")
     lines += informe_uso()
     (out / "informe.md").write_text("\n".join(lines) + "\n")
     return {}
@@ -1559,6 +1631,7 @@ def write_slide(s: SlideState) -> dict:
         kind_desc=KINDS[spec["kind"]][0], kind_example=KINDS[spec["kind"]][1], title=spec["title"],
         bullets="\n".join(f"- {b}" for b in spec["bullets"]), context=s["context"],
         section=spec.get("section") or "-", plan=s.get("plan") or "-", num=s["idx"],
+        previos=(s["previos"] + "\n\n") if s.get("previos") else "",
         aviso=(f"Aviso del guion (tenlo en cuenta al elegir las cifras): {spec['aviso']}\n"
                if spec.get("aviso") else "")))
     return {"frame": frame}
@@ -1574,6 +1647,9 @@ def compile_slide(s: SlideState) -> dict:
     style = [] if spec["kind"] in FIXED_KINDS else (
         kind_check(s["frame"], spec["kind"], spec["sources"], tuple(s.get("damaged", ())))
         + style_check(s["frame"], s["limits"]))
+    if spec["kind"] not in FIXED_KINDS:
+        registrar_errores("compilación", spec["kind"], errors, s.get("paper", ""))
+        registrar_errores("formato/estilo", spec["kind"], style, s.get("paper", ""))
     out = {"errors": errors, "style_errors": style}
     if not errors:
         out["best_frame"] = s["frame"]
