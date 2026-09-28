@@ -85,9 +85,13 @@ def main() -> int:
             obligatorio |= req
 
     print("\nOtros (opcionales):")
+    dot = shutil.which("dot")
+    print(f"  {OK if dot else OPC} Graphviz (dot)               diapositivas de tipo diagram")
     lo = shutil.which("soffice") or shutil.which("libreoffice")
     print(f"  {OK if lo else OPC} LibreOffice                  ver el .pptx sin PowerPoint")
 
+    if not dot:
+        print("\nPara diagramas: sudo apt-get install graphviz   (macOS: brew install graphviz)")
     if not faltan_pip and not faltan_tex and pdflatex:
         print("\nTodo listo.")
         return 0

@@ -169,6 +169,24 @@ o2 = bg.asegurar_portada(bg.Outline(title="Demo", authors="", venue="", notation
 assert [s.kind for s in o2.slides] == ["title", "agenda", "block", "block"]
 assert any("sin sección válida" in e for e in bg.validate_outline(o2, chunks))
 
+# Diagramas: el DOT se dibuja con Graphviz (PDF para Beamer, PNG para PowerPoint) y se valida
+if bg.hay_graphviz():
+    figd = tmp / "diag" / "figuras"
+    fr_d = (r"\begin{frame}{Flujo}" "\n" r"\begin{diagrama}" "\n"
+            'digraph { rankdir=LR; a [label="Leer"]; b [label="Validar"]; a -> b; }' "\n"
+            r"\end{diagrama}" "\n" r"\end{frame}")
+    tex_d, e_d, a_d = bg.expandir_diagramas(fr_d, figd)
+    assert not e_d and not a_d and "\\includegraphics" in tex_d and "diagrama" not in tex_d
+    assert list(figd.glob("diag_*.pdf")) and list(figd.glob("diag_*.png"))
+    assert not bg.kind_check(fr_d, "diagram", ["sec1"]) and bg.kind_check(r"\begin{frame}{X}x\end{frame}", "diagram", ["sec1"])
+    assert not bg.lint_frame(bg.sin_diagramas(fr_d))
+    _, e_mal, _ = bg.expandir_diagramas(fr_d.replace("a -> b;", "a -> ;"), figd)
+    assert e_mal and "DOT no es válido" in e_mal[0]
+    grande = "digraph{" + ";".join(f"n{i}->n{i+1}" for i in range(20)) + "}"
+    _, _, a_g = bg.expandir_diagramas(r"\begin{diagrama}" + grande + r"\end{diagrama}", figd)
+    assert any("nodos" in x for x in a_g)
+    assert "diagram" in bg.kinds_disponibles()
+
 # Secciones libres: toda diapo con sección y cada sección con diapos seguidas; fijas: las de estilo.toml
 libre = dict(bg.STYLE_DEFAULTS)
 sec = lambda n: bg.SlideSpec(title="T", bullets=["x"], kind="block", sources=["sec1"], section=n)

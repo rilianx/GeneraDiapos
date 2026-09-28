@@ -178,11 +178,29 @@ calcular pesos $w$\;
 \Return $\arg\max_i s_i$\;
 \end{algorithm}
 \end{frame}""", (r"\\begin\{algorithm\}", "incluye el pseudocódigo en un entorno algorithm (algorithm2e)")),
+    "diagram": (
+        "diagrama de un proceso, flujo o arquitectura (nodos y flechas); se escribe en DOT de Graphviz y "
+        "lo dibuja el pipeline, con 1-2 líneas de lectura",
+        r"""\begin{frame}{Cada pedido pasa por tres etapas}
+\begin{diagrama}
+digraph {
+  rankdir=LR;
+  entrada [label="Pedido"];
+  validar [label="Validar\ndatos"];
+  procesar [label="Procesar"];
+  salida [label="Respuesta"];
+  entrada -> validar -> procesar -> salida;
+  validar -> entrada [label="error", style=dashed];
+}
+\end{diagrama}
+\small Un pedido inválido vuelve al inicio.
+\end{frame}""", (r"\\begin\{diagrama\}", "dibuja el diagrama en DOT dentro de \\begin{diagrama} ... \\end{diagrama}")),
 }
 
 KIND_ALIASES = {"alertblock": "block", "exampleblock": "block", "blocks": "block",
                 "two_columns": "columns", "column": "columns", "itemize": "bullets",
-                "list": "bullets", "tabular": "table", "math": "equation", "pseudocode": "algorithm"}
+                "list": "bullets", "tabular": "table", "math": "equation", "pseudocode": "algorithm",
+                "diagrama": "diagram", "graphviz": "diagram", "flowchart": "diagram"}
 
 # Diapos que arma el código, sin LLM ni revisor
 FIXED_KINDS = ("title", "agenda")
@@ -192,6 +210,100 @@ AGENDA_FRAME = "\\begin{frame}{Contenido}\n\\tableofcontents\n\\end{frame}"
 # Una diapo de solo viñetas que cita una tabla o ecuación pasa a mostrarla.
 # (Un alg* puede citarse como contexto sin mostrar el pseudocódigo.)
 BULLETS_UPGRADE = {"tab": "table", "eq": "equation", "fig": "figure"}
+
+# ----------------------------------------------------------------------------
+# Diagramas (Graphviz): el modelo escribe DOT; el pipeline lo dibuja con estilo fijo
+# ----------------------------------------------------------------------------
+DIAGRAMA = re.compile(r"\\begin\{diagrama\}(?:\[([^\]]*)\])?(.*?)\\end\{diagrama\}", re.S)
+DIAGRAMA_ESTILO = {
+    "graph": 'fontname="Helvetica", bgcolor="transparent", pad="0.08", nodesep="0.35", ranksep="0.45"',
+    "node": ('shape=box, style="rounded,filled", fillcolor="#DCE6F2", color="#4F81BD", penwidth=1.3, '
+             'fontname="Helvetica", fontcolor="#002060", fontsize=14, margin="0.15,0.06"'),
+    "edge": 'color="#1F497D", penwidth=1.2, arrowsize=0.8, fontname="Helvetica", fontsize=12, fontcolor="#1F497D"',
+}
+MAX_NODOS_DIAGRAMA = 14
+MIN_LETRA_DIAGRAMA = 6.0          # pt que tendría la letra del nodo una vez ajustado a la diapo
+AREA_DIAGRAMA_IN = (5.0, 1.9)     # ancho y alto útiles (pulgadas) en una diapo 16:9 de metropolis
+
+
+def hay_graphviz() -> bool:
+    return shutil.which("dot") is not None
+
+
+def kinds_disponibles() -> dict:
+    return {k: v for k, v in KINDS.items() if k != "diagram" or hay_graphviz()}
+
+
+def _dot_con_estilo(dot: str) -> str:
+    """El estilo por defecto va primero: lo que escriba el modelo en el grafo lo puede cambiar."""
+    i = dot.find("{")
+    if i < 0:
+        return dot
+    defaults = "".join(f"\n  {k} [{v}];" for k, v in DIAGRAMA_ESTILO.items())
+    return dot[:i + 1] + defaults + dot[i + 1:]
+
+
+def render_diagrama(dot: str, figdir: Path) -> tuple[str | None, list[str], list[str]]:
+    """Dibuja un DOT en figdir/diag_<hash>.pdf y .png. Devuelve (ruta relativa, errores, avisos de estilo)."""
+    import hashlib
+    if not hay_graphviz():
+        return None, ["Diagrama: Graphviz (dot) no está instalado; usa otro tipo de diapositiva"], []
+    codigo = _dot_con_estilo(dot.strip())
+    h = hashlib.sha1(codigo.encode()).hexdigest()[:10]
+    figdir.mkdir(parents=True, exist_ok=True)
+    pdf, png = figdir / f"diag_{h}.pdf", figdir / f"diag_{h}.png"
+    try:
+        plano = subprocess.run(["dot", "-Tplain"], input=codigo, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return None, ["Diagrama: Graphviz tardó demasiado; simplifica el grafo"], []
+    if plano.returncode:
+        msg = " ".join(plano.stderr.split())[:300]
+        return None, [f"Diagrama: el DOT no es válido ({msg})"], []
+    nodos = [l for l in plano.stdout.splitlines() if l.startswith("node ")]
+    avisos = []
+    if len(nodos) > MAX_NODOS_DIAGRAMA:
+        avisos.append(f"Diagrama con {len(nodos)} nodos; máximo {MAX_NODOS_DIAGRAMA}: agrupa o simplifica")
+    cab = plano.stdout.split("\n", 1)[0].split()           # graph escala ancho alto
+    if len(cab) >= 4:
+        ancho, alto = float(cab[2]), float(cab[3])
+        letra = 14 * min(1.0, AREA_DIAGRAMA_IN[0] / max(ancho, 0.1), AREA_DIAGRAMA_IN[1] / max(alto, 0.1))
+        if letra < MIN_LETRA_DIAGRAMA:
+            avisos.append(f"Diagrama demasiado grande para la diapo: la letra quedaría de {letra:.1f}pt; "
+                          "usa menos nodos o cambia rankdir (LR si es alto, TB si es ancho)")
+    for fmt, dest, extra in (("pdf", pdf, []), ("png", png, ["-Gdpi=220"])):
+        if not dest.exists():
+            r = subprocess.run(["dot", f"-T{fmt}", *extra, "-o", str(dest)], input=codigo,
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode:
+                return None, [f"Diagrama: Graphviz no pudo dibujarlo ({' '.join(r.stderr.split())[:200]})"], avisos
+    return f"figuras/{pdf.name}", [], avisos
+
+
+def expandir_diagramas(frame: str, figdir: str | Path | None) -> tuple[str, list[str], list[str]]:
+    """Reemplaza cada \\begin{diagrama}…\\end{diagrama} por la imagen dibujada con Graphviz."""
+    if "\\begin{diagrama}" not in frame:
+        return frame, [], []
+    figdir = Path(figdir) if figdir else Path(tempfile.mkdtemp()) / "figuras"
+    errores, avisos = [], []
+
+    def cambiar(m):
+        ruta, e, a = render_diagrama(m.group(2), figdir)
+        errores.extend(e)
+        avisos.extend(a)
+        if not ruta:
+            return "\\fbox{Diagrama pendiente}"
+        opts = m.group(1) or "width=0.9\\textwidth"
+        if "height" not in opts:
+            opts += ",height=0.62\\textheight"
+        if "keepaspectratio" not in opts:
+            opts += ",keepaspectratio"
+        return f"\\begin{{center}}\n\\includegraphics[{opts}]{{{ruta}}}\n\\end{{center}}"
+    return DIAGRAMA.sub(cambiar, frame), errores, avisos
+
+
+def sin_diagramas(frame: str) -> str:
+    """El frame sin el código DOT (para las reglas de estilo, que miran el LaTeX)."""
+    return DIAGRAMA.sub(r"\\begin{center}\\end{center}", frame)
 
 # ----------------------------------------------------------------------------
 # Esquemas
@@ -968,6 +1080,9 @@ las cifras del texto; nunca dejes filas con "--". No crees columnas agregadas (m
 Respeta qué mide cada cifra (p. ej. "ganancia frente al mejor competidor" no es "frente a X").
 - Figuras: solo las fig* del CONTEXTO, con \includegraphics y la ruta exacta que indica \
 ([archivo: figuras/figN.png]); escala con width y height (keepaspectratio) para que quepa.
+- Diagramas (tipo diagram): escribe el grafo en DOT de Graphviz dentro de \begin{{diagrama}} … \
+\end{{diagrama}} (sin \includegraphics); solo nodos, flechas y etiquetas breves, con el contenido del \
+CONTEXTO. El estilo lo pone el pipeline: no uses colores ni fuentes. Pocos nodos (máximo 14).
 - Debe caber en una pantalla. Si el contenido es mucho, prioriza y resume.
 
 Guía de estilo:
@@ -1179,8 +1294,10 @@ def ingest(state: State) -> dict:
         raise RuntimeError("No se pudo extraer texto del documento")
     out = {"chunks": chunks, "texto": text, "inicio": time.time()}
     path = Path(state["source_path"])
+    dest = (Path(state["out_dir"]) if state.get("out_dir") else Path(tempfile.mkdtemp())) / "figuras"
+    dest.mkdir(parents=True, exist_ok=True)
+    out["figuras_dir"] = str(dest)
     if path.suffix == ".pdf":
-        dest = (Path(state["out_dir"]) if state.get("out_dir") else Path(tempfile.mkdtemp())) / "figuras"
         for n, f in extraer_figuras(path, dest).items():
             chunks[f"fig{n}"] = (f"Figure {n} (pág. {f['pagina']}): {pie_corto(f['caption'])}\n"
                                  f"[archivo: {f['archivo']}]")
@@ -1309,9 +1426,9 @@ def validate_outline(o: Outline, chunks: dict, lim: dict | None = None) -> list[
     errs = []
     lim = lim or STYLE_DEFAULTS
     for i, s in enumerate(o.slides):
-        if s.kind not in FIXED_KINDS and s.kind not in KINDS:
+        if s.kind not in FIXED_KINDS and s.kind not in kinds_disponibles():
             errs.append(f"Diapositiva {i} ('{s.title}') tiene kind='{s.kind}' inválido; "
-                        f"usa uno de: {', '.join(KINDS)}")
+                        f"usa uno de: {', '.join(kinds_disponibles())}")
             continue
         if len(s.bullets) > lim["max_items"]:
             errs.append(f"Diapositiva {i} ('{s.title}') tiene {len(s.bullets)} puntos; "
@@ -1386,7 +1503,7 @@ def outline(state: State) -> dict:
     feedback = ""
     for attempt in range(1, MAX_OUTLINE_ATTEMPTS + 1):
         o = call_structured(MODEL_OUTLINE, Outline, effort=REASONING_OUTLINE, prompt=OUTLINE_PROMPT.format(
-            kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in KINDS.items()),
+            kinds="\n".join(f"  - {k}: {d}" for k, (d, _, _) in kinds_disponibles().items()),
             regla_secciones=regla_secciones(lim), instrucciones=bloque_instrucciones(state),
             nmin=N_SLIDES[0], nmax=N_SLIDES[1], chunks=listing, feedback=feedback,
             macros=base_macros(base), guide="\n".join(filter(None, [guide, guia_guion(state.get("style_path"))])) or "-",
@@ -1627,7 +1744,7 @@ def assemble(state: State) -> dict:
             frame = (f"% TODO: la diapositiva {idx} no compiló tras {MAX_SLIDE_ATTEMPTS} intentos\n"
                      f"\\begin{{frame}}{{{title}}}\n\\alert{{Diapositiva pendiente de revisión}}\n"
                      f"\\end{{frame}}")
-        body.append(frame)
+        body.append(expandir_diagramas(frame, state.get("figuras_dir"))[0])
     tex = state["head"] + "\n" + "\n\n".join(body) + "\n" + state["tail"]
     return {"tex": tex, "global_attempts": 0}
 
@@ -1688,7 +1805,7 @@ def exportar_pptx(state: State, out: Path) -> str:
     for idx, frame, status, _, _ in sorted(state["frames"], key=lambda f: f[0]):
         if status == "failed":
             frame = f"\\begin{{frame}}{{{slides[idx]['title']}}}\nDiapositiva pendiente de revisión\n\\end{{frame}}"
-        frames.append((slides[idx]["kind"], frame))
+        frames.append((slides[idx]["kind"], expandir_diagramas(frame, state.get("figuras_dir"))[0]))
     try:
         import pptx_export
         destino = pptx_export.exportar(
@@ -1759,15 +1876,17 @@ def write_slide(s: SlideState) -> dict:
 
 
 def compile_slide(s: SlideState) -> dict:
-    errors = lint_frame(s["frame"])          # barato: antes de llamar a pdflatex
+    # los diagramas DOT se dibujan antes; lint y estilo miran el frame sin el código DOT
+    frame_tex, diag_err, diag_avisos = expandir_diagramas(s["frame"], s.get("figuras_dir"))
+    errors = lint_frame(sin_diagramas(s["frame"])) + diag_err   # barato: antes de llamar a pdflatex
     if not errors:
-        tex, offset = standalone(s["head"], s["frame"])
+        tex, offset = standalone(s["head"], frame_tex)
         errors, _ = compile_tex(tex, offset=offset, ignore_vbox=s["spec"]["kind"] in FIXED_KINDS,
                                 figuras=s.get("figuras_dir"))
     spec = s["spec"]
     style = [] if spec["kind"] in FIXED_KINDS else (
         kind_check(s["frame"], spec["kind"], spec["sources"], tuple(s.get("damaged", ())))
-        + style_check(s["frame"], s["limits"]))
+        + style_check(sin_diagramas(s["frame"]), s["limits"]) + diag_avisos)
     if spec["kind"] not in FIXED_KINDS:
         registrar_errores("compilación", spec["kind"], errors, s.get("paper", ""))
         registrar_errores("formato/estilo", spec["kind"], style, s.get("paper", ""))

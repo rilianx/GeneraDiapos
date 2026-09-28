@@ -389,6 +389,8 @@ class Dibujante:
             if self.figuras is None:
                 return None
             p = self.figuras.parent / pz["ruta"] if pz["ruta"].startswith("figuras/") else self.figuras / pz["ruta"]
+            if p.suffix == ".pdf":                    # diagramas: PDF en Beamer, PNG en PowerPoint
+                p = p.with_suffix(".png")
             return p if p.exists() else None
         return self.raster(pz)
 

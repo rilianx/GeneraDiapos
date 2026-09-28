@@ -18,5 +18,10 @@ if ! command -v pdflatex >/dev/null || ! kpsewhich beamerthememetropolis.sty alg
     texlive-latex-recommended texlive-latex-extra texlive-pictures \
     texlive-science texlive-fonts-recommended poppler-utils >/dev/null
 fi
+if ! command -v dot >/dev/null; then                 # Graphviz: diapositivas de tipo diagram
+  SUDO=""
+  [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+  DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq --no-install-recommends graphviz >/dev/null
+fi
 
 python3 -m pip install -q --root-user-action=ignore -r requirements.txt
