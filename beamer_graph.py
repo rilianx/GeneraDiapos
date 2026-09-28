@@ -1936,6 +1936,41 @@ def tex_a_pptx(tex: Path, plantilla: str | None = None) -> Path:
         pdf_beamer=tex.with_suffix(".pdf"), macros=base_definiciones(head))
 
 
+# Lo que genera el pipeline (solo esto se borra al empezar de nuevo; nunca la carpeta entera)
+GENERADOS_SALIDA = ["presentacion.tex", "presentacion.pdf", "presentacion.pptx", "informe.md",
+                    "outline.json", "outline_borrador.json", "figuras"]
+GENERADOS_TRABAJO = ["estado.sqlite", "estado.sqlite-wal", "estado.sqlite-shm", "meta.json",
+                     "pendientes.json", "comun.md", "tiempos.jsonl", "guion.md", "guion.json",
+                     "guion_doc.md", "error.log", "tareas", "respuestas"]
+
+
+def limpiar(carpeta: str | Path | None, nombres: list[str]) -> list[str]:
+    """Borra de la carpeta los archivos/carpetas generados con esos nombres; devuelve lo borrado."""
+    if not carpeta:
+        return []
+    borrados = []
+    for n in nombres:
+        p = Path(carpeta) / n
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p)
+        elif p.exists() or p.is_symlink():
+            p.unlink()
+        else:
+            continue
+        borrados.append(n)
+    return borrados
+
+
+def empezar_de_nuevo(args) -> None:
+    """Con un paper y sin --reanudar, una ejecución empieza de cero: se borra el trabajo previo
+    (estado, tareas, respuestas) y lo generado en la salida, para no mezclar corridas."""
+    if not getattr(args, "source", None) or getattr(args, "reanudar", False):
+        return
+    b = limpiar(getattr(args, "claude", None), GENERADOS_TRABAJO) + limpiar(args.out, GENERADOS_SALIDA)
+    if b:
+        print(f"Se borró el trabajo previo ({', '.join(b)}); usa --reanudar para continuarlo.")
+
+
 def opciones_pptx(args) -> dict:
     if not (getattr(args, "pptx", False) or getattr(args, "plantilla", None)):
         return {}
@@ -1958,6 +1993,9 @@ def main() -> None:
     ap.add_argument("--claude", metavar="DIR",
                     help="modo Claude Code (LLM_PROVIDER=claude): estado y tareas en DIR; "
                          "vuelve a ejecutar con --claude DIR para continuar")
+    ap.add_argument("--reanudar", action="store_true",
+                    help="con un paper, continúa el trabajo previo en vez de empezar de cero (por "
+                         "defecto se borra lo generado antes en --claude DIR y --out)")
     ap.add_argument("--pptx", action="store_true",
                     help="exporta también presentacion.pptx (fórmulas editables) sobre la plantilla")
     ap.add_argument("--plantilla", default=None, metavar="PPTX",
@@ -1981,6 +2019,7 @@ def main() -> None:
         return
     args.instrucciones = leer_instrucciones(args.instrucciones)
     if args.claude:
+        empezar_de_nuevo(args)
         from driver_claude import run
         try:
             raise SystemExit(run(args))
@@ -2010,6 +2049,7 @@ def main() -> None:
         print(f"Guion: {path} (vista: {path.with_suffix('.md')})")
         return
 
+    empezar_de_nuevo(args)
     graph = build_graph()
     config = {"configurable": {"thread_id": "beamer"}, "max_concurrency": args.concurrency}
     result = graph.invoke({"source_path": args.source, "base_path": args.base, "style_path": args.estilo,

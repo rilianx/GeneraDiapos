@@ -402,6 +402,18 @@ bad = driver_claude.leer_respuestas([{"id": "x", "tarea": "t", "respuesta": str(
 _, _, errs = driver_claude.leer_respuestas([{"id": "x", "tarea": "t", "respuesta": str(tmp / "mal.json"),
                                              "tipo": "json", "esquema": "Review"}], {})
 assert errs and bad[1] == ["t"]
+# Empezar de nuevo (con paper, sin --reanudar): se borra solo lo generado, no archivos propios
+(tmp / "out_claude" / "mio.txt").write_text("no tocar")
+cli.reanudar = True
+bg.empezar_de_nuevo(cli)
+assert (work / "estado.sqlite").exists() and (tmp / "out_claude" / "presentacion.pdf").exists()
+cli.reanudar = False
+bg.empezar_de_nuevo(cli)
+assert not (work / "estado.sqlite").exists() and not (work / "tareas").exists()
+assert not (tmp / "out_claude" / "presentacion.pdf").exists() and not (tmp / "out_claude" / "figuras").exists()
+assert (tmp / "out_claude" / "mio.txt").read_text() == "no tocar"
+bg.PROVIDER = "claude"
+assert driver_claude.run(cli) == 3 and "lectura" in (work / "pendientes.json").read_text()  # corrida nueva
 bg.PROVIDER = "openai"
 
 # Guion como documento editable: ida y vuelta a través de un editor de markdown simulado
