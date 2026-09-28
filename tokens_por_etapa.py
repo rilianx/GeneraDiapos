@@ -99,7 +99,14 @@ def main() -> int:
     for k, r in enumerate(rondas):                     # el pipeline de la ronda k+1 procesa lo respondido
         nombre = etapa_de(rondas[k - 1]["nuevas"]) if k else "Arranque (skill, lanzar el pipeline)"
         filas[nombre]["pipeline_s"] += r["fin"] - r["inicio"]
-    for tu in turnos(tr):
+    # Caché vencida: un turno que no lee nada de caché tras el primero reescribe todo el contexto
+    ts = turnos(tr)
+    ttl = {"5m": sum(t["u"].get("cache_creation", {}).get("ephemeral_5m_input_tokens", 0) for t in ts),
+           "1h": sum(t["u"].get("cache_creation", {}).get("ephemeral_1h_input_tokens", 0) for t in ts)}
+    vencidas = [(ts[i]["t"] - ts[i - 1]["t"], tokens(ts[i])["nuevos"]) for i in range(1, len(ts))
+                if not ts[i]["u"].get("cache_read_input_tokens") and tokens(ts[i])["nuevos"] > 5000]
+
+    for tu in ts:
         tk = tokens(tu)
         if tu["tipos"] <= {"text", "thinking"}:        # sin herramientas: habla con el usuario
             for c in tk:
@@ -135,6 +142,14 @@ def main() -> int:
           "barato. La salida se estima por lo escrito (~3,5 caracteres por token): el transcript no guarda "
           "el conteo final ni el razonamiento oculto, así que es un mínimo. El tiempo de Claude incluye "
           "pensar y escribir las respuestas.")
+    if ttl["5m"] or ttl["1h"]:
+        dur = "1 hora" if ttl["1h"] >= ttl["5m"] else "5 minutos (típico de un subagente)"
+        print(f"\nCaché del prompt: {dur}.", end=" ")
+        if vencidas:
+            print("Se venció " + "; ".join(f"tras {g / 60:.1f} min sin actividad ({fmt(n)} tokens reescritos)"
+                                           for g, n in vencidas) + ".")
+        else:
+            print("No se venció en ningún momento.")
     return 0
 
 
