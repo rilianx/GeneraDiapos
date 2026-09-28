@@ -1506,6 +1506,19 @@ def informe_uso() -> list[str]:
     return lines
 
 
+def titulo_frame(frame: str) -> str:
+    """Título de \\begin{frame}[opciones]{título}, con llaves anidadas; "" si no tiene."""
+    m = re.search(r"\\begin\{frame\}\s*(?:\[[^\]]*\]\s*)?\{", frame)
+    if not m:
+        return ""
+    depth, i = 1, m.end()
+    for j in range(i, len(frame)):
+        depth += {"{": 1, "}": -1}.get(frame[j], 0)
+        if depth == 0:
+            return " ".join(frame[i:j].split())
+    return ""
+
+
 def write_outputs(state: State) -> dict:
     out = Path(state["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
@@ -1523,8 +1536,10 @@ def write_outputs(state: State) -> dict:
         lines.append("\n## Avisos del guion (revisar las tablas usadas)\n")
         lines += [f"- Diapo {i}: {w}" for i, ws in av.items() for w in ws]
     lines.append("\n| # | Diapositiva | Estado | Intentos | Avisos |\n|---|---|---|---|---|")
-    for idx, _, status, attempts, warns in sorted(state["frames"], key=lambda f: f[0]):
-        title = state["outline"]["slides"][idx]["title"].replace("|", "/")
+    for idx, frame, status, attempts, warns in sorted(state["frames"], key=lambda f: f[0]):
+        # el título de la diapo final: un refinado pudo acortar el del guion
+        title = ((status != "failed" and titulo_frame(frame))
+                 or state["outline"]["slides"][idx]["title"]).replace("|", "/")
         warns = [" ".join(w.replace("|", "/").split()) for w in warns]   # una celda de tabla md
         lines.append(f"| {idx} | {title} | {status} | {attempts} | {'<br>'.join(warns) or '-'} |")
     lines += informe_uso()

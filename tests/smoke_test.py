@@ -304,6 +304,9 @@ assert len(com) == 1 and largo not in cs[0] and cs[2] == "C corta"
 assert driver_claude.expandir(cs[1], tmp / "c.md") == f"B\n\n{largo}\n\nTítulo: 2"
 # celdas con «--» en una tabla: no se aceptan
 assert bg.filas_repetidas(r"\begin{tabular}{lrr} A & 1 & 2 \\ B & 3 & -- \\ \end{tabular}")
+# el informe usa el título final de la diapo (un refinado pudo acortarlo), con llaves anidadas
+assert bg.titulo_frame(r"\begin{frame}[fragile]{\texttt{lsmear} gana}\n x \end{frame}") == r"\texttt{lsmear} gana"
+assert bg.titulo_frame(bg.TITLE_FRAME) == ""
 # índice de tablas con el inventario de la lectura: sin «encabezados: Encabezados:»
 idx = bg.indice_tablas({"tab1": "Table 1 (pág. 3): t\nEncabezados: a | b\nCompara: x, y\nMide: z"})
 assert "encabezados: Encabezados" not in idx and "Compara: x, y" in idx
