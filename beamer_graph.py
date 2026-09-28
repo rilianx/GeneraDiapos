@@ -685,9 +685,10 @@ def registrar_errores(tipo: str, kind: str, msgs: list[str], paper: str = "") ->
         pass                                   # el registro nunca debe frenar la generación
 
 
-def leer_errores(desde: float = 0.0) -> list[dict]:
-    p = Path(ERRORES_LOG)
-    if ERRORES_LOG == "off" or not p.exists():
+def leer_errores(desde: float = 0.0, ruta: str | None = None) -> list[dict]:
+    ruta = ruta or ERRORES_LOG
+    p = Path(ruta)
+    if ruta == "off" or not p.exists():
         return []
     out = []
     for l in p.read_text().splitlines():
@@ -709,6 +710,38 @@ def errores_previos(n: int = MAX_ERRORES_PREVIOS, min_veces: int = MIN_VECES_PRE
         return ""
     return ("Errores que los validadores detectaron en diapositivas de ejecuciones anteriores "
             "(evítalos desde el primer intento):\n" + "\n".join(f"- {c} ({k} veces)" for c, k in top))
+
+
+def resumen_errores(ruta: str | None = None) -> str:
+    """--resumen-errores: tabla markdown del registro, por categoría (la más frecuente primero),
+    para revisarlo antes de proponer mejoras a la herramienta."""
+    import datetime as dt
+    from collections import Counter, defaultdict
+    rs = leer_errores(ruta=ruta)
+    ruta = ruta or ERRORES_LOG
+    if not rs:
+        return f"Sin errores registrados en {ruta}."
+    grupos: dict[str, list[dict]] = defaultdict(list)
+    for r in rs:
+        grupos[r["categoria"]].append(r)
+    fecha = lambda ts: dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    cel = lambda t: " ".join(str(t).replace("|", "/").split())
+    papers = {r.get("paper") for r in rs}
+    lineas = [f"# Resumen de errores de los validadores\n",
+              f"{len(rs)} errores en {len(grupos)} categorías, {len(papers)} paper(s), "
+              f"del {fecha(min(r['ts'] for r in rs))} al {fecha(max(r['ts'] for r in rs))} "
+              f"(registro: `{ruta}`).\n",
+              "Por tipo: " + ", ".join(f"{t} {k}" for t, k in Counter(r["tipo"] for r in rs).most_common())
+              + " · por tipo de diapo: "
+              + ", ".join(f"{t} {k}" for t, k in Counter(r["kind"] for r in rs).most_common()) + "\n",
+              "| Veces | Categoría | Tipo | Diapos | Papers | Último | Ejemplo |",
+              "|---|---|---|---|---|---|---|"]
+    for cat, g in sorted(grupos.items(), key=lambda kv: -len(kv[1])):
+        kinds = ", ".join(f"{k} {n}" for k, n in Counter(r["kind"] for r in g).most_common())
+        lineas.append(f"| {len(g)} | {cel(cat)} | {cel(g[-1]['tipo'])} | {kinds} | "
+                      f"{len({r.get('paper') for r in g})} | {fecha(max(r['ts'] for r in g))} | "
+                      f"{cel(g[-1]['mensaje'])[:140]} |")
+    return "\n".join(lineas)
 
 
 def soft_checks(frame: str, context: str) -> list[str]:
@@ -1777,7 +1810,13 @@ def main() -> None:
     ap.add_argument("--claude", metavar="DIR",
                     help="modo Claude Code (LLM_PROVIDER=claude): estado y tareas en DIR; "
                          "vuelve a ejecutar con --claude DIR para continuar")
+    ap.add_argument("--resumen-errores", nargs="?", const="", metavar="JSONL",
+                    help="resume el registro de errores de los validadores (por defecto "
+                         "errores_validacion.jsonl) y termina")
     args = ap.parse_args()
+    if args.resumen_errores is not None:
+        print(resumen_errores(args.resumen_errores or None))
+        return
     if args.claude:
         from driver_claude import run
         try:

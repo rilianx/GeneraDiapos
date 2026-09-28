@@ -118,6 +118,9 @@ assert "Errores que detectaron los validadores" in (out / "informe.md").read_tex
 assert bg.errores_previos() == ""                       # visto una sola vez: aún no se avisa
 bg.registrar_errores("compilación", "equation", ["Error: Undefined control sequence. contexto: \\noexiste"])
 assert "Undefined control sequence (\\noexiste) (2 veces)" in bg.errores_previos()
+res_err = bg.resumen_errores()                          # --resumen-errores
+assert "| Veces | Categoría |" in res_err and "Undefined control sequence (\\noexiste)" in res_err
+assert "Sin errores registrados" in bg.resumen_errores(str(tmp / "no_existe.jsonl"))
 # Tipos de diapo: el guion debe respetar fuentes y variedad; el frame, su formato
 spec = lambda k, src: bg.SlideSpec(title="T", bullets=["x"], kind=k, sources=src, section="Propuesta")
 chunks = {"sec1": "", "tab1": "", "eq1": ""}
